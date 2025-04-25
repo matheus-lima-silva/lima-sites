@@ -18,8 +18,13 @@ from lima.settings import DATABASE_URL
 # access to the values within the .ini file in use.
 config = context.config
 
+# Converte URL assíncrona para síncrona se necessário
+sync_url = DATABASE_URL
+if sync_url.startswith('sqlite+aiosqlite:'):
+    sync_url = sync_url.replace('sqlite+aiosqlite:', 'sqlite:')
+
 # Sobrescreve a URL do banco de dados definida no alembic.ini
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+config.set_main_option("sqlalchemy.url", sync_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

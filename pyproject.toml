@@ -30,6 +30,7 @@ pytest-asyncio = "^0.26.0"
 factory-boy = "^3.3.3"
 freezegun = "^1.5.1"
 testcontainers = "^4.10.0"
+pyngrok = "^7.2.5"
 
 [tool.ruff]
 line-length = 79
@@ -59,6 +60,12 @@ run = 'fastapi dev lima/app.py'
 pre_test = 'task lint'
 test = 'pytest -s -x --cov=lima -vv'
 post_test = 'coverage html'
+# Tarefas para webhook e ngrok
+server = 'uvicorn app:app --reload'
+ngrok = 'ngrok http 8000'
+webhook-config = 'python configure_webhook.py'
+webhook-setup = { cmd = "echo 'Iniciando configuração do webhook do WhatsApp...' && task webhook-config", help = "Configura o webhook do WhatsApp" }
+webhook-dev = { cmd = "python webhook_dev.py", help = "Inicia ambiente de desenvolvimento com ngrok e servidor" }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

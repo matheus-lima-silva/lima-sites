@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routers import (
     alteracoes,
+    anotacoes,
     auth,
     buscas,
     enderecos,
@@ -32,6 +33,7 @@ app.include_router(enderecos.router)
 app.include_router(buscas.router)
 app.include_router(sugestoes.router)
 app.include_router(alteracoes.router)
+app.include_router(anotacoes.router)
 
 
 @app.get('/', status_code=HTTPStatus.OK)

@@ -1,2 +1,67 @@
-database.db
-database.db
+# Arquivos de banco de dados
+*.db
+*.sqlite
+*.sqlite3
+dev.db
+
+# Arquivos de ambiente e credenciais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Diretórios de cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Arquivos de distribuição e build
+dist/
+build/
+*.egg-info/
+
+# Diretórios e arquivos de ambiente virtual
+venv/
+env/
+ENV/
+.venv/
+.python-version
+
+# Arquivos de log
+*.log
+logs/
+
+# Arquivos temporários do sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# Diretórios de IDEs e editores
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.vs/
+
+# Arquivos de cobertura de testes
+.coverage
+htmlcov/
+coverage.xml
+
+# Arquivos temporários do Jupyter Notebook
+.ipynb_checkpoints/
+
+# Diretório de documentação build
+docs/_build/
+site/
+
+# Arquivos específicos do projeto
+tokens.txt
+secrets.json
+

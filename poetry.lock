@@ -1340,6 +1340,25 @@ docs = ["sphinx", "sphinx-rtd-theme", "zope.interface"]
 tests = ["coverage[toml] (==5.0.4)", "pytest (>=6.0.0,<7.0.0)"]
 
 [[package]]
+name = "pyngrok"
+version = "7.2.5"
+description = "A Python wrapper for ngrok"
+optional = false
+python-versions = ">=3.8"
+groups = ["dev"]
+files = [
+    {file = "pyngrok-7.2.5-py3-none-any.whl", hash = "sha256:ef796237bd871ea716ab62237a324ee53999307b208640bf91d13baffdf5aa6b"},
+    {file = "pyngrok-7.2.5.tar.gz", hash = "sha256:9a12852d63fbea251a463d855d510ed50401a02e69b4a7a29c86d1b50c5e3875"},
+]
+
+[package.dependencies]
+PyYAML = ">=5.1"
+
+[package.extras]
+dev = ["coverage[toml]", "flake8", "flake8-pyproject", "pep8-naming", "psutil", "pytest"]
+docs = ["Sphinx (<8.2)", "mypy", "sphinx-notfound-page", "sphinx-substitution-extensions", "sphinx_autodoc_typehints (==1.25.2)", "types-PyYAML"]
+
+[[package]]
 name = "pytest"
 version = "8.3.5"
 description = "pytest: simple powerful testing with Python"
@@ -1473,7 +1492,7 @@ version = "6.0.2"
 description = "YAML parser and emitter for Python"
 optional = false
 python-versions = ">=3.8"
-groups = ["main"]
+groups = ["main", "dev"]
 files = [
     {file = "PyYAML-6.0.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:0a9a2848a5b7feac301353437eb7d5957887edbf81d56e903999a75a3d743086"},
     {file = "PyYAML-6.0.2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:29717114e51c84ddfba879543fb232a6ed60086602313ca38cce623c1d62cfbf"},
@@ -2289,4 +2308,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<4.0"
-content-hash = "731361a08e28a7cba777d97e81eb98b4f95849ad03380f4004de12a559bdba5d"
+content-hash = "937d2231438a2f2430af53bebdb46a255e4bfb18617a5386cf93786659ee092b"

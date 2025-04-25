@@ -1,15 +1,38 @@
-from dotenv import load_dotenv
-import os
+"""
+Módulo de configurações do sistema (raiz do projeto).
 
-load_dotenv()
-
-# Use SQLite como padrão para desenvolvimento
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./dev.db")
-SECRET_KEY = os.getenv("SECRET_KEY", "changeme")
-DEBUG = os.getenv("DEBUG", "False") == "True"
+Este módulo importa e disponibiliza as configurações definidas no pacote principal.
+As configurações são carregadas das variáveis de ambiente definidas no arquivo .env.
+"""
+from lima.settings import (
+    load_dotenv,
+    DATABASE_URL,
+    SECRET_KEY,
+    DEBUG,
+    ACCESS_TOKEN_EXPIRE_DAYS,
+    WHATSAPP_API_VERSION,
+    WHATSAPP_PHONE_NUMBER_ID,
+    WHATSAPP_BUSINESS_ACCOUNT_ID,
+    WHATSAPP_ACCESS_TOKEN,
+    WHATSAPP_VERIFY_TOKEN,
+    WHATSAPP_APP_SECRET,
+    WHATSAPP_WEBHOOK_URL,
+    Settings
+)
 
 # Classe de configurações para uso com FastAPI, etc.
-class Settings:
-    DATABASE_URL: str = DATABASE_URL
-    SECRET_KEY: str = SECRET_KEY
-    DEBUG: bool = DEBUG
+__all__ = [
+    'load_dotenv',
+    'DATABASE_URL',
+    'SECRET_KEY',
+    'DEBUG',
+    'ACCESS_TOKEN_EXPIRE_DAYS',
+    'WHATSAPP_API_VERSION',
+    'WHATSAPP_PHONE_NUMBER_ID',
+    'WHATSAPP_BUSINESS_ACCOUNT_ID',
+    'WHATSAPP_ACCESS_TOKEN',
+    'WHATSAPP_VERIFY_TOKEN',
+    'WHATSAPP_APP_SECRET',
+    'WHATSAPP_WEBHOOK_URL',
+    'Settings'
+]

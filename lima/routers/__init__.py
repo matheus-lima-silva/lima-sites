@@ -1,6 +1,7 @@
 # Este pacote conterá todos os routers da aplicação
 
 from .alteracoes import router as alteracoes_router
+from .anotacoes import router as anotacoes_router
 from .auth import router as auth_router
 from .buscas import router as buscas_router
 from .enderecos import router as enderecos_router
@@ -14,4 +15,5 @@ __all__ = [
     "buscas_router",
     "sugestoes_router",
     "alteracoes_router",
+    "anotacoes_router",
 ]

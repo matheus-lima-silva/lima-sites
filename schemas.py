@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +10,11 @@ from lima.models import (
     TipoEndereco,
     TipoSugestao,
 )
+
+
+# ---------- MENSAGEM SIMPLES ----------
+class Message(BaseModel):
+    message: str
 
 
 # ---------- USUARIO ----------

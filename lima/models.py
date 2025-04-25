@@ -74,6 +74,11 @@ class Usuario:
         back_populates='usuario',
         lazy='selectin'
     )
+    anotacoes: Mapped[list['Anotacao']] = relationship(
+        init=False,
+        back_populates='usuario',
+        lazy='selectin'
+    )
 
 
 @table_registry.mapped_as_dataclass
@@ -104,6 +109,11 @@ class Endereco:
         lazy='selectin'
     )
     alteracoes: Mapped[list['Alteracao']] = relationship(
+        init=False,
+        back_populates='endereco',
+        lazy='selectin'
+    )
+    anotacoes: Mapped[list['Anotacao']] = relationship(
         init=False,
         back_populates='endereco',
         lazy='selectin'
@@ -189,5 +199,35 @@ class Alteracao:
     usuario: Mapped['Usuario'] = relationship(
         init=False,
         back_populates='alteracoes',
+        lazy='selectin'
+    )
+
+
+@table_registry.mapped_as_dataclass
+class Anotacao:
+    __tablename__ = 'anotacoes'
+
+    id: Mapped[int] = mapped_column(init=False, primary_key=True)
+    id_endereco: Mapped[int] = mapped_column(ForeignKey('enderecos.id'))
+    id_usuario: Mapped[int] = mapped_column(ForeignKey('usuarios.id'))
+    texto: Mapped[str]
+    data_criacao: Mapped[datetime] = mapped_column(
+        init=False,
+        server_default=func.now()
+    )
+    data_atualizacao: Mapped[datetime] = mapped_column(
+        init=False,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    endereco: Mapped['Endereco'] = relationship(
+        init=False,
+        back_populates='anotacoes',
+        lazy='selectin'
+    )
+    usuario: Mapped['Usuario'] = relationship(
+        init=False,
+        back_populates='anotacoes',
         lazy='selectin'
     )

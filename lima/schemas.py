@@ -121,3 +121,27 @@ class AlteracaoRead(AlteracaoBase):
 
     class Config:
         orm_mode = True
+
+
+# ---------- ANOTACAO ----------
+class AnotacaoBase(BaseModel):
+    id_endereco: int
+    id_usuario: int
+    texto: str = Field(..., example='Endereço verificado pessoalmente')
+
+
+class AnotacaoCreate(AnotacaoBase):
+    pass
+
+
+class AnotacaoUpdate(BaseModel):
+    texto: str = Field(..., example='Endereço verificado pessoalmente')
+
+
+class AnotacaoRead(AnotacaoBase):
+    id: int
+    data_criacao: datetime
+    data_atualizacao: datetime
+
+    class Config:
+        orm_mode = True

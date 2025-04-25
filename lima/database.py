@@ -1,4 +1,5 @@
 from typing import AsyncGenerator
+import os
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -11,13 +12,17 @@ from .settings import Settings
 settings = Settings()
 DATABASE_URL = settings.DATABASE_URL
 
-engine = create_async_engine(DATABASE_URL, echo=False, future=True)
-
-async_session = async_sessionmaker(
-    bind=engine,
-    expire_on_commit=False,
-    class_=AsyncSession,
-)
+# Só cria a engine assíncrona se não estiver rodando via Alembic
+if not os.environ.get("ALEMBIC"):
+    engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+    async_session = async_sessionmaker(
+        bind=engine,
+        expire_on_commit=False,
+        class_=AsyncSession,
+    )
+else:
+    engine = None
+    async_session = None
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
