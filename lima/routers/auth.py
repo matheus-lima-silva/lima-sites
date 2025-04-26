@@ -1,18 +1,29 @@
-from typing import Annotated, Dict, Any, Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Header, Request, Query
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_async_session
 from ..security import (
-    create_whatsapp_token, 
-    validate_phone_number,
+    create_whatsapp_token,
     get_auto_user_by_phone,
+    validate_phone_number,
+)
+from ..services.whatsapp import parse_webhook_message, verify_webhook_signature
+from ..services.whatsapp_commands import (
+    enviar_menu_inicial,
+    processar_interacao,
 )
 from ..settings import Settings
-from ..services.whatsapp import verify_webhook_signature, parse_webhook_message
-from ..services.whatsapp_commands import processar_interacao, enviar_menu_inicial
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 settings = Settings()
@@ -52,20 +63,20 @@ async def create_whatsapp_access_token(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Número de telefone inválido",
         )
-    
+
     # Em produção: verifique o código recebido via WhatsApp
     # if not verify_code(auth_request.phone_number, auth_request.verification_code):
     #     raise HTTPException(
     #         status_code=status.HTTP_401_UNAUTHORIZED,
     #         detail="Código de verificação inválido",
     #     )
-    
+
     # Registra ou atualiza o usuário
     await get_auto_user_by_phone(auth_request.phone_number, session)
-    
+
     # Gera o token
     access_token = create_whatsapp_token(auth_request.phone_number)
-    
+
     return Token(access_token=access_token, token_type="bearer")
 
 
@@ -84,11 +95,11 @@ async def verify_whatsapp_webhook(
     """
     # Usa o token de verificação das configurações
     VERIFY_TOKEN = settings.WHATSAPP_VERIFY_TOKEN
-    
+
     if hub_mode and hub_verify_token:
         if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
             return int(hub_challenge) if hub_challenge else "WEBHOOK_VERIFIED"
-        
+
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Verificação falhou",
@@ -111,11 +122,11 @@ async def verify_whatsapp_webhook_alt(
     """
     # Usa o token de verificação das configurações
     VERIFY_TOKEN = settings.WHATSAPP_VERIFY_TOKEN
-    
+
     if hub_mode and hub_verify_token:
         if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
             return int(hub_challenge) if hub_challenge else "WEBHOOK_VERIFIED"
-        
+
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Verificação falhou",
@@ -136,7 +147,7 @@ async def whatsapp_webhook(
     """
     # Obter o corpo da requisição em bytes para verificar a assinatura
     body_bytes = await request.body()
-    
+
     # Verificar a assinatura do webhook (em produção)
     if settings.WHATSAPP_APP_SECRET:
         is_valid = await verify_webhook_signature(body_bytes, x_hub_signature_256)
@@ -145,28 +156,28 @@ async def whatsapp_webhook(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Assinatura do webhook inválida",
             )
-    
+
     # Converter o corpo para JSON
     payload = await request.json()
-    
+
     # Verifica se é uma mensagem de status ou uma mensagem real
     if "entry" not in payload or not payload.get("entry"):
         return {"status": "ignored", "reason": "No entry data"}
-        
+
     # Usa a função de parsing para extrair informações da mensagem
     parsed_message = await parse_webhook_message(payload)
-    
+
     # Ignora se não tiver número de telefone ou não for uma mensagem
     if not parsed_message.get("phone_number"):
         return {"status": "ignored", "reason": "No phone number found"}
-    
+
     phone_number = parsed_message["phone_number"]
     message_type = parsed_message["message_type"]
     message_content = parsed_message["message_content"]
-    
+
     # Cria/atualiza o usuário automaticamente
     user = await get_auto_user_by_phone(phone_number, session)
-    
+
     # Processa a interação usando o módulo de comandos
     result = await processar_interacao(
         session=session,
@@ -175,13 +186,13 @@ async def whatsapp_webhook(
         message_type=message_type,
         message_content=message_content
     )
-    
+
     # Se for a primeira mensagem do usuário, envia o menu de boas-vindas
     if getattr(user, 'is_new', False):
         await enviar_menu_inicial(phone_number)
-    
+
     return {
-        "status": "processed", 
+        "status": "processed",
         "user_id": user.id,
         "message_type": message_type,
         "processing_result": result

@@ -4,8 +4,7 @@ Este módulo contém funções para envio de prompts e recebimento de respostas
 dos serviços de IA para formatar mensagens humanizadas.
 """
 import logging
-import json
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict
 
 import httpx
 
@@ -51,18 +50,18 @@ async def format_endereco_resposta(endereco: Dict[str, Any]) -> str:
     Inclua informações sobre como esse endereço está registrado em nosso sistema.
     Seja conciso mas amigável, como se estivesse conversando por WhatsApp.
     """
-    
+
     # Se existir coordenadas, adicione ao prompt
     if endereco.get('latitude') and endereco.get('longitude'):
         prompt += f"\nObservação: Este endereço tem coordenadas geográficas registradas: {endereco.get('latitude')}, {endereco.get('longitude')}."
-    
+
     # Use o serviço de IA para formatar a resposta
     try:
         response_text = await query_openai(prompt)
         return response_text
     except AIServiceError as e:
         logger.warning(f"Falha ao usar IA para formatar resposta: {e}")
-        
+
         # Fallback para resposta formatada manualmente
         return (
             f"🏠 *Endereço encontrado*\n\n"
@@ -96,14 +95,14 @@ async def format_sugestao_resposta(sugestao: Dict[str, Any]) -> str:
     
     Seja conciso mas amigável, como se estivesse conversando por WhatsApp.
     """
-    
+
     # Use o serviço de IA para formatar a resposta
     try:
         response_text = await query_openai(prompt)
         return response_text
     except AIServiceError as e:
         logger.warning(f"Falha ao usar IA para formatar resposta: {e}")
-        
+
         # Fallback para resposta formatada manualmente
         return (
             f"✅ *Sugestão registrada com sucesso!*\n\n"
@@ -115,7 +114,7 @@ async def format_sugestao_resposta(sugestao: Dict[str, Any]) -> str:
 
 
 async def query_openai(
-    prompt: str, 
+    prompt: str,
     model: str = DEFAULT_MODEL,
     temperature: float = DEFAULT_TEMPERATURE,
     max_tokens: int = DEFAULT_MAX_TOKENS
@@ -139,14 +138,14 @@ async def query_openai(
     api_key = getattr(settings, "OPENAI_API_KEY", None)
     if not api_key:
         raise AIServiceError("Chave da API da OpenAI não configurada")
-        
+
     # Prepara os dados da requisição
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
-    
+
     payload = {
         "model": model,
         "messages": [
@@ -156,18 +155,18 @@ async def query_openai(
         "temperature": temperature,
         "max_tokens": max_tokens
     }
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                url, 
-                headers=headers, 
+                url,
+                headers=headers,
                 json=payload,
                 timeout=DEFAULT_TIMEOUT
             )
             response.raise_for_status()
             result = response.json()
-            
+
             # Extrai o texto da resposta
             if "choices" in result and len(result["choices"]) > 0:
                 return result["choices"][0]["message"]["content"].strip()
@@ -208,13 +207,13 @@ async def query_gemini(
     api_key = getattr(settings, "GEMINI_API_KEY", None)
     if not api_key:
         raise AIServiceError("Chave da API do Gemini não configurada")
-        
+
     # API do Gemini
     url = f"https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key={api_key}"
     headers = {
         "Content-Type": "application/json"
     }
-    
+
     payload = {
         "contents": [
             {
@@ -232,18 +231,18 @@ async def query_gemini(
             "topK": 40
         }
     }
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                url, 
-                headers=headers, 
+                url,
+                headers=headers,
                 json=payload,
                 timeout=DEFAULT_TIMEOUT
             )
             response.raise_for_status()
             result = response.json()
-            
+
             # Extrai o texto da resposta (formato específico do Gemini)
             if "candidates" in result and len(result["candidates"]) > 0:
                 candidate = result["candidates"][0]
@@ -251,7 +250,7 @@ async def query_gemini(
                     parts = candidate["content"]["parts"]
                     if parts and "text" in parts[0]:
                         return parts[0]["text"].strip()
-                        
+
             # Se chegou aqui, não conseguiu extrair a resposta
             raise AIServiceError("Formato de resposta inválido do Gemini")
     except httpx.HTTPStatusError as e:

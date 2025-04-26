@@ -34,11 +34,11 @@ async def criar_alteracao(
         tipo_alteracao=alteracao.tipo_alteracao,
         detalhe=alteracao.detalhe,
     )
-    
+
     session.add(db_alteracao)
     await session.commit()
     await session.refresh(db_alteracao)
-    
+
     return db_alteracao
 
 
@@ -63,31 +63,31 @@ async def obter_alteracao(
             selectinload(Alteracao.endereco),
         )
     )
-    
+
     result = await session.execute(stmt)
     alteracao = result.scalar_one_or_none()
-    
+
     if alteracao is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Alteração não encontrada",
         )
-    
+
     # Verifica permissão: usuários básicos só podem ver suas próprias alterações
-    if (current_user.nivel_acesso == NivelAcesso.basico and 
+    if (current_user.nivel_acesso == NivelAcesso.basico and
             alteracao.id_usuario != current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para acessar esta alteração",
         )
-    
+
     return alteracao
 
 
 @router.get("/", response_model=List[AlteracaoRead])
 async def listar_alteracoes(
     session: AsyncSessionDep,
-    skip: int = 0, 
+    skip: int = 0,
     limit: int = 100,
     current_user: Usuario = Depends(get_current_user),
 ):
@@ -103,17 +103,17 @@ async def listar_alteracoes(
         selectinload(Alteracao.usuario),
         selectinload(Alteracao.endereco),
     )
-    
+
     # Restrição para usuários básicos
     if current_user.nivel_acesso == NivelAcesso.basico:
         query = query.where(Alteracao.id_usuario == current_user.id)
-    
+
     # Aplica paginação
     query = query.offset(skip).limit(limit)
-    
+
     result = await session.execute(query)
     alteracoes = result.scalars().all()
-    
+
     return alteracoes
 
 
@@ -136,28 +136,26 @@ async def deletar_alteracao(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuários básicos não podem remover alterações",
         )
-    
+
     # Busca a alteração
     stmt = select(Alteracao).where(Alteracao.id == alteracao_id)
     result = await session.execute(stmt)
     alteracao = result.scalar_one_or_none()
-    
+
     if alteracao is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Alteração não encontrada",
         )
-    
+
     # Verifica permissão para usuários intermediários
-    if (current_user.nivel_acesso == NivelAcesso.intermediario and 
+    if (current_user.nivel_acesso == NivelAcesso.intermediario and
             alteracao.id_usuario != current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuários intermediários só podem remover suas próprias alterações",
         )
-    
+
     # Remove a alteração
     await session.delete(alteracao)
     await session.commit()
-    
-    return None

@@ -2,8 +2,15 @@ from http import HTTPStatus
 
 from fastapi import FastAPI
 
+from lima.routers import (
+    alteracoes,
+    auth,
+    buscas,
+    enderecos,
+    sugestoes,
+    usuarios,
+)
 from schemas import Message
-from lima.routers import auth, usuarios, buscas, enderecos, alteracoes, sugestoes
 
 app = FastAPI(
     title="Lima API",

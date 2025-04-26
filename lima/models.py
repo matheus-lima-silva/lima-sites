@@ -4,6 +4,8 @@ from enum import Enum
 from sqlalchemy import ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, registry, relationship
 
+from .database import utcnow
+
 # Registry para SQLAlchemy 2.x
 table_registry = registry()
 
@@ -86,6 +88,7 @@ class Endereco:
     __tablename__ = 'enderecos'
 
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
+    codigo_endereco: Mapped[str] = mapped_column(unique=True)  # Identificador alfanumérico externo (ex: "rnit08")
     uf: Mapped[str]
     municipio: Mapped[str]
     bairro: Mapped[str]
@@ -130,6 +133,7 @@ class Busca:
     info_adicional: Mapped[str | None] = mapped_column(default=None)
     data_busca: Mapped[datetime] = mapped_column(
         init=False,
+        default_factory=utcnow,
         server_default=func.now()
     )
 
@@ -162,6 +166,7 @@ class Sugestao:
     detalhe: Mapped[str | None] = mapped_column(default=None)
     data_sugestao: Mapped[datetime] = mapped_column(
         init=False,
+        default_factory=utcnow,
         server_default=func.now()
     )
 
@@ -188,6 +193,7 @@ class Alteracao:
     detalhe: Mapped[str | None] = mapped_column(default=None)
     data_alteracao: Mapped[datetime] = mapped_column(
         init=False,
+        default_factory=utcnow,
         server_default=func.now()
     )
 
@@ -213,12 +219,14 @@ class Anotacao:
     texto: Mapped[str]
     data_criacao: Mapped[datetime] = mapped_column(
         init=False,
+        default_factory=utcnow,
         server_default=func.now()
     )
     data_atualizacao: Mapped[datetime] = mapped_column(
         init=False,
+        default_factory=utcnow,
         server_default=func.now(),
-        onupdate=func.now()
+        onupdate=utcnow
     )
 
     endereco: Mapped['Endereco'] = relationship(

@@ -5,7 +5,7 @@ Este módulo carrega e disponibiliza todas as configurações necessárias para 
 As configurações são carregadas das variáveis de ambiente definidas no arquivo .env.
 """
 import os
-from typing import Optional, Literal
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -13,7 +13,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configurações do Banco de Dados
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./dev.db")
+# PostgreSQL é o banco padrão para produção, SQLite para desenvolvimento
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/lima_db"
+)
 
 # Configurações de Segurança
 SECRET_KEY = os.getenv("SECRET_KEY", "changeme")
@@ -47,12 +51,12 @@ class Settings:
     """
     # Configurações de Banco de Dados
     DATABASE_URL: str = DATABASE_URL
-    
+
     # Configurações de Segurança
     SECRET_KEY: str = SECRET_KEY
     DEBUG: bool = DEBUG
     ACCESS_TOKEN_EXPIRE_DAYS: int = ACCESS_TOKEN_EXPIRE_DAYS
-    
+
     # Configurações do WhatsApp
     WHATSAPP_API_VERSION: str = WHATSAPP_API_VERSION
     WHATSAPP_PHONE_NUMBER_ID: Optional[str] = WHATSAPP_PHONE_NUMBER_ID
@@ -61,13 +65,13 @@ class Settings:
     WHATSAPP_VERIFY_TOKEN: str = WHATSAPP_VERIFY_TOKEN
     WHATSAPP_APP_SECRET: Optional[str] = WHATSAPP_APP_SECRET
     WHATSAPP_WEBHOOK_URL: Optional[str] = WHATSAPP_WEBHOOK_URL
-    
+
     # Configurações de IA
     OPENAI_API_KEY: Optional[str] = OPENAI_API_KEY
     OPENAI_MODEL: str = OPENAI_MODEL
     GEMINI_API_KEY: Optional[str] = GEMINI_API_KEY
     AI_SERVICE: str = AI_SERVICE
-    
+
     @property
     def whatsapp_configured(self) -> bool:
         """
@@ -80,7 +84,7 @@ class Settings:
             self.WHATSAPP_PHONE_NUMBER_ID,
             self.WHATSAPP_ACCESS_TOKEN
         ])
-    
+
     @property
     def openai_configured(self) -> bool:
         """
@@ -90,7 +94,7 @@ class Settings:
             bool: True se a API da OpenAI estiver configurada.
         """
         return bool(self.OPENAI_API_KEY)
-    
+
     @property
     def gemini_configured(self) -> bool:
         """
@@ -100,7 +104,7 @@ class Settings:
             bool: True se a API do Gemini estiver configurada.
         """
         return bool(self.GEMINI_API_KEY)
-    
+
     @property
     def ai_service_enabled(self) -> bool:
         """

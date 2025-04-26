@@ -5,16 +5,13 @@ e comandos recebidos dos usuários através do WhatsApp.
 """
 import logging
 import re
-from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+from typing import Any, Dict
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
 
-from ..models import Usuario, Endereco, Busca
-from . import whatsapp
 from ..settings import Settings
-from . import ai_service
+from . import ai_service, whatsapp
 
 settings = Settings()
 logger = logging.getLogger(__name__)
@@ -49,17 +46,17 @@ async def processar_comando(
     """
     # Normaliza a mensagem (lowercase, remove espaços extras)
     message = message_content.lower().strip()
-    
+
     # Verifica se é um comando conhecido
     if message.startswith(tuple(COMANDOS.keys())):
         # Extrai o comando principal (primeira palavra)
         comando = message.split()[0]
-        
+
         # Processa baseado no comando
         if comando == "ajuda":
             await exibir_ajuda(phone_number)
             return {"status": "processed", "command": "ajuda"}
-            
+
         elif comando == "buscar":
             # Extrai o termo de busca (tudo após o comando "buscar")
             termo_busca = message[len("buscar"):].strip()
@@ -69,19 +66,19 @@ async def processar_comando(
                     message="⚠️ Por favor, forneça um termo para busca. Exemplo: buscar Rua Augusta, 1000"
                 )
                 return {"status": "error", "command": "buscar", "reason": "missing_term"}
-                
+
             resultado = await buscar_endereco(session, phone_number, user_id, termo_busca)
             return {
-                "status": "processed", 
-                "command": "buscar", 
+                "status": "processed",
+                "command": "buscar",
                 "term": termo_busca,
                 "found": resultado.get("encontrado", False)
             }
-            
+
         elif comando == "info":
             await exibir_info_usuario(session, phone_number, user_id)
             return {"status": "processed", "command": "info"}
-            
+
         elif comando == "sugerir":
             # Extrai o conteúdo da sugestão
             conteudo = message[len("sugerir"):].strip()
@@ -94,20 +91,20 @@ async def processar_comando(
                     )
                 )
                 return {"status": "error", "command": "sugerir", "reason": "missing_content"}
-                
+
             await registrar_sugestao(session, phone_number, user_id, conteudo)
             return {"status": "processed", "command": "sugerir"}
-            
+
         elif comando == "historico":
             await exibir_historico(session, phone_number, user_id)
             return {"status": "processed", "command": "historico"}
-    
+
     # Se não for um comando, tenta interpretar como busca direta ou envia mensagem de ajuda
     if len(message) > 5 and re.search(r'\d+', message):  # Se contém ao menos um número, pode ser um endereço
         resultado = await buscar_endereco(session, phone_number, user_id, message)
         return {
-            "status": "processed", 
-            "command": "busca_implicita", 
+            "status": "processed",
+            "command": "busca_implicita",
             "term": message,
             "found": resultado.get("encontrado", False)
         }
@@ -134,16 +131,16 @@ async def exibir_ajuda(phone_number: str) -> None:
     ajuda_texto = "📋 *Comandos disponíveis*\n\n"
     for cmd, desc in COMANDOS.items():
         ajuda_texto += f"*{cmd}*: {desc}\n"
-        
+
     ajuda_texto += "\n💡 Você também pode digitar diretamente um endereço para busca!"
-    
+
     await whatsapp.send_text_message(to=phone_number, message=ajuda_texto)
 
 
 async def buscar_endereco(
-    session: AsyncSession, 
-    phone_number: str, 
-    user_id: int, 
+    session: AsyncSession,
+    phone_number: str,
+    user_id: int,
     termo_busca: str
 ) -> Dict[str, Any]:
     """
@@ -162,11 +159,11 @@ async def buscar_endereco(
     termo = termo_busca.strip()
     if not termo:
         await whatsapp.send_text_message(
-            to=phone_number, 
+            to=phone_number,
             message="⚠️ Por favor, forneça um termo válido para busca."
         )
         return {"encontrado": False, "erro": "Termo inválido"}
-    
+
     try:
         # Em uma implementação real, seria algo como:
         # result = await session.execute(
@@ -179,14 +176,14 @@ async def buscar_endereco(
         #     .limit(5)
         # )
         # enderecos = result.scalars().all()
-        
+
         # Simulação para exemplo
         encontrado = len(termo) > 5 and any(c.isdigit() for c in termo)
-        
+
         if encontrado:
             # Simula um endereço encontrado
             endereco = {
-                'logradouro': f"Rua Exemplo",
+                'logradouro': "Rua Exemplo",
                 'numero': termo.split()[0] if termo.split() else '100',
                 'bairro': "Centro",
                 'municipio': "São Paulo",
@@ -194,7 +191,7 @@ async def buscar_endereco(
                 'cep': "01000-000",
                 'iddetentora': f"ID-{termo.split()[0] if termo.split() else '100'}"
             }
-            
+
             # Tenta usar IA para formatar a resposta se estiver configurada
             if settings.ai_service_enabled:
                 try:
@@ -229,7 +226,7 @@ async def buscar_endereco(
                         f"Para sugerir alterações neste endereço, use o comando 'sugerir'."
                     )
                 )
-            
+
             # Registrar busca no histórico (código simulado)
             # new_busca = Busca(
             #     id_endereco=1,  # ID simulado
@@ -239,7 +236,7 @@ async def buscar_endereco(
             # )
             # session.add(new_busca)
             # await session.commit()
-            
+
             return {"encontrado": True, "quantidade": 1}
         else:
             # Não encontrou
@@ -262,8 +259,8 @@ async def buscar_endereco(
 
 
 async def exibir_info_usuario(
-    session: AsyncSession, 
-    phone_number: str, 
+    session: AsyncSession,
+    phone_number: str,
     user_id: int
 ) -> None:
     """
@@ -278,7 +275,7 @@ async def exibir_info_usuario(
     # Em uma implementação real:
     # result = await session.execute(select(Usuario).where(Usuario.id == user_id))
     # usuario = result.scalars().first()
-    
+
     await whatsapp.send_text_message(
         to=phone_number,
         message=(
@@ -294,9 +291,9 @@ async def exibir_info_usuario(
 
 
 async def registrar_sugestao(
-    session: AsyncSession, 
-    phone_number: str, 
-    user_id: int, 
+    session: AsyncSession,
+    phone_number: str,
+    user_id: int,
     conteudo: str
 ) -> None:
     """
@@ -314,14 +311,14 @@ async def registrar_sugestao(
         tipo_sugestao = "modificacao"
     elif "remover" in conteudo.lower() or "excluir" in conteudo.lower():
         tipo_sugestao = "remocao"
-    
+
     # Cria o objeto de sugestão para enviar à IA
     sugestao = {
         "tipo_sugestao": tipo_sugestao,
         "detalhe": conteudo,
         "data_sugestao": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
-    
+
     # TODO: Implementar o registro real da sugestão
     # Em uma implementação real:
     # new_sugestao = Sugestao(
@@ -333,7 +330,7 @@ async def registrar_sugestao(
     # )
     # session.add(new_sugestao)
     # await session.commit()
-    
+
     # Tenta usar IA para formatar a resposta se estiver configurada
     if settings.ai_service_enabled:
         try:
@@ -343,7 +340,7 @@ async def registrar_sugestao(
         except ai_service.AIServiceError as e:
             logger.error(f"Erro ao formatar resposta com IA: {e}")
             # Continua para usar o formato padrão
-    
+
     # Formato padrão sem IA
     await whatsapp.send_text_message(
         to=phone_number,
@@ -358,8 +355,8 @@ async def registrar_sugestao(
 
 
 async def exibir_historico(
-    session: AsyncSession, 
-    phone_number: str, 
+    session: AsyncSession,
+    phone_number: str,
     user_id: int
 ) -> None:
     """
@@ -380,7 +377,7 @@ async def exibir_historico(
     #     .limit(5)
     # )
     # buscas = result.all()
-    
+
     # Simulação para exemplo
     await whatsapp.send_text_message(
         to=phone_number,
@@ -438,11 +435,11 @@ async def processar_interacao(
     if message_type == "text":
         # Processa como texto normal
         return await processar_comando(session, phone_number, user_id, message_content)
-        
+
     elif message_type == "interactive":
         # Processa resposta interativa (botões)
         button_id = message_content  # Extraído pelo parse_webhook_message
-        
+
         if button_id == "btn_buscar":
             await whatsapp.send_text_message(
                 to=phone_number,
@@ -453,15 +450,15 @@ async def processar_interacao(
                 )
             )
             return {"status": "processed", "interactive": "btn_buscar"}
-            
+
         elif button_id == "btn_ajuda":
             await exibir_ajuda(phone_number)
             return {"status": "processed", "interactive": "btn_ajuda"}
-            
+
         elif button_id == "btn_info":
             await exibir_info_usuario(session, phone_number, user_id)
             return {"status": "processed", "interactive": "btn_info"}
-    
+
     # Tipo de mensagem não suportado
     await whatsapp.send_text_message(
         to=phone_number,

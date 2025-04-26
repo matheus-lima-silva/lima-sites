@@ -39,6 +39,7 @@ class UsuarioRead(UsuarioBase):
 
 # ---------- ENDERECO ----------
 class EnderecoBase(BaseModel):
+    codigo_endereco: str = Field(..., example='rnit08', description='Código alfanumérico único do endereço')
     iddetentora: Optional[str] = None
     uf: str = Field(..., example='SP')
     municipio: str = Field(..., example='São Paulo')

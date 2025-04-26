@@ -1,16 +1,16 @@
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from zoneinfo import ZoneInfo
-import re
 
-from fastapi import Depends, HTTPException, Request, Header
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, Header, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import DecodeError, ExpiredSignatureError, decode, encode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_async_session
-from .models import Usuario, NivelAcesso
+from .models import NivelAcesso, Usuario
 from .settings import Settings
 
 settings = Settings()
@@ -46,14 +46,14 @@ def verify_whatsapp_origin(phone_number: str, whatsapp_id: str = None) -> bool:
     # Implementação simplificada - em produção, faça validações mais robustas
     if not phone_number:
         return False
-    
+
     # Validação básica do formato do telefone
     if not validate_phone_number(phone_number):
         return False
-    
+
     # Em produção: verificar assinaturas do WhatsApp Cloud API
     # e validar whatsapp_id contra a configuração da plataforma
-    
+
     return True
 
 
@@ -61,19 +61,21 @@ def verify_whatsapp_origin(phone_number: str, whatsapp_id: str = None) -> bool:
 class WhatsAppBearer(HTTPBearer):
     def __init__(self, auto_error: bool = True):
         super().__init__(auto_error=auto_error)
-    
+
     async def __call__(
         self, request: Request, x_whatsapp_phone: str = Header(None)
     ) -> HTTPAuthorizationCredentials:
         credentials = await super().__call__(request)
-        
-        if credentials and x_whatsapp_phone:
-            if not verify_whatsapp_origin(x_whatsapp_phone):
+
+        if credentials:
+            # Se o cabeçalho x_whatsapp_phone está presente, valida a origem do WhatsApp
+            if x_whatsapp_phone and not verify_whatsapp_origin(x_whatsapp_phone):
                 raise HTTPException(
                     status_code=HTTPStatus.UNAUTHORIZED,
                     detail="Origem do WhatsApp inválida",
                 )
             return credentials
+            
         raise HTTPException(
             status_code=HTTPStatus.UNAUTHORIZED,
             detail="Credenciais inválidas",
@@ -95,7 +97,7 @@ async def get_auto_user_by_phone(
     stmt = select(Usuario).where(Usuario.telefone == phone_number)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
-    
+
     if not user and create_if_not_exists:
         # Cria automaticamente um usuário básico
         user = Usuario(
@@ -105,7 +107,7 @@ async def get_auto_user_by_phone(
         session.add(user)
         await session.commit()
         await session.refresh(user)
-    
+
     return user
 
 
@@ -144,8 +146,8 @@ async def get_current_user(
     if not user:
         raise credentials_exception
 
-    # Atualiza last_seen
-    user.last_seen = datetime.now(tz=ZoneInfo('UTC'))
+    # Atualiza last_seen - Corrigido para usar datetime sem timezone para compatibilidade com o PostgreSQL
+    user.last_seen = datetime.now().replace(tzinfo=None)
     await session.commit()
 
     return user
@@ -163,16 +165,16 @@ async def get_user_by_phone(
             status_code=HTTPStatus.BAD_REQUEST,
             detail="Número de telefone inválido",
         )
-    
+
     # Obtém ou cria usuário automaticamente
     user = await get_auto_user_by_phone(phone_number, session)
-    
+
     if not user:
         raise HTTPException(
             status_code=HTTPStatus.NOT_FOUND,
             detail="Usuário não encontrado e não foi possível criar",
         )
-    
+
     return user
 
 
@@ -185,7 +187,7 @@ def check_permission(required_level: NivelAcesso):
                 detail=f"Acesso insuficiente. Nível necessário: {required_level.name}",
             )
         return user
-    
+
     return permission_checker
 
 

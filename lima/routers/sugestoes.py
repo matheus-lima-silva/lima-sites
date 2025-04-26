@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..database import get_async_session
-from ..models import Sugestao, NivelAcesso
+from ..models import NivelAcesso, Sugestao
 from ..schemas import SugestaoCreate, SugestaoRead
-from ..security import get_current_user, require_intermediario, Usuario
+from ..security import Usuario, get_current_user, require_intermediario
 
 router = APIRouter(prefix="/sugestoes", tags=["Sugestões"])
 
@@ -34,11 +34,11 @@ async def criar_sugestao(
         tipo_sugestao=sugestao.tipo_sugestao,
         detalhe=sugestao.detalhe,
     )
-    
+
     session.add(db_sugestao)
     await session.commit()
     await session.refresh(db_sugestao)
-    
+
     return db_sugestao
 
 
@@ -63,31 +63,31 @@ async def obter_sugestao(
             selectinload(Sugestao.endereco),
         )
     )
-    
+
     result = await session.execute(stmt)
     sugestao = result.scalar_one_or_none()
-    
+
     if not sugestao:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sugestão não encontrada",
         )
-    
+
     # Verifica permissão: usuários básicos só podem ver suas próprias sugestões
-    if (current_user.nivel_acesso == NivelAcesso.basico and 
+    if (current_user.nivel_acesso == NivelAcesso.basico and
             sugestao.id_usuario != current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para acessar esta sugestão",
         )
-    
+
     return sugestao
 
 
 @router.get("/", response_model=List[SugestaoRead])
 async def listar_sugestoes(
     session: AsyncSessionDep,
-    skip: int = 0, 
+    skip: int = 0,
     limit: int = 100,
     current_user: Usuario = Depends(get_current_user),
 ):
@@ -103,17 +103,17 @@ async def listar_sugestoes(
         selectinload(Sugestao.usuario),
         selectinload(Sugestao.endereco),
     )
-    
+
     # Restrição para usuários básicos
     if current_user.nivel_acesso == NivelAcesso.basico:
         query = query.where(Sugestao.id_usuario == current_user.id)
-    
+
     # Aplica paginação
     query = query.offset(skip).limit(limit)
-    
+
     result = await session.execute(query)
     sugestoes = result.scalars().all()
-    
+
     return sugestoes
 
 
@@ -131,23 +131,23 @@ async def aprovar_sugestao(
     stmt = select(Sugestao).where(Sugestao.id == sugestao_id)
     result = await session.execute(stmt)
     sugestao = result.scalar_one_or_none()
-    
+
     if not sugestao:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sugestão não encontrada",
         )
-    
+
     # Altera o status para aprovado
     from ..models import StatusSugestao
     sugestao.status = StatusSugestao.aprovado
-    
+
     # Aqui você pode implementar a lógica para aplicar a sugestão
     # Exemplo: Se for uma sugestão de adição, criar um novo endereço
-    
+
     await session.commit()
     await session.refresh(sugestao)
-    
+
     return sugestao
 
 
@@ -165,20 +165,20 @@ async def rejeitar_sugestao(
     stmt = select(Sugestao).where(Sugestao.id == sugestao_id)
     result = await session.execute(stmt)
     sugestao = result.scalar_one_or_none()
-    
+
     if not sugestao:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sugestão não encontrada",
         )
-    
+
     # Altera o status para rejeitado
     from ..models import StatusSugestao
     sugestao.status = StatusSugestao.rejeitado
-    
+
     await session.commit()
     await session.refresh(sugestao)
-    
+
     return sugestao
 
 
@@ -199,16 +199,16 @@ async def deletar_sugestao(
     stmt = select(Sugestao).where(Sugestao.id == sugestao_id)
     result = await session.execute(stmt)
     sugestao = result.scalar_one_or_none()
-    
+
     if not sugestao:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sugestão não encontrada",
         )
-    
+
     # Verifica permissão
     from ..models import StatusSugestao
-    
+
     if current_user.nivel_acesso == NivelAcesso.basico:
         if sugestao.id_usuario != current_user.id:
             raise HTTPException(
@@ -227,9 +227,7 @@ async def deletar_sugestao(
                 detail="Usuários intermediários só podem deletar sugestões pendentes",
             )
     # Super-usuários podem deletar qualquer sugestão
-    
+
     # Remove a sugestão
     await session.delete(sugestao)
     await session.commit()
-    
-    return None

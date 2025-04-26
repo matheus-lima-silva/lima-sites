@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 from ..database import get_async_session
 from ..models import Busca, NivelAcesso
 from ..schemas import BuscaCreate, BuscaRead
-from ..security import get_current_user, require_intermediario, Usuario
+from ..security import Usuario, get_current_user
 
 router = APIRouter(prefix="/buscas", tags=["Buscas"])
 
@@ -33,11 +33,11 @@ async def registrar_busca(
         id_usuario=current_user.id,  # Usa ID do usuário logado
         info_adicional=busca.info_adicional,
     )
-    
+
     session.add(db_busca)
     await session.commit()
     await session.refresh(db_busca)
-    
+
     return db_busca
 
 
@@ -62,31 +62,31 @@ async def obter_busca(
             selectinload(Busca.endereco),
         )
     )
-    
+
     result = await session.execute(stmt)
     busca = result.scalar_one_or_none()
-    
+
     if not busca:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Busca não encontrada",
         )
-    
+
     # Verifica permissão: usuários básicos só podem ver suas próprias buscas
-    if (current_user.nivel_acesso == NivelAcesso.basico and 
+    if (current_user.nivel_acesso == NivelAcesso.basico and
             busca.id_usuario != current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sem permissão para acessar esta busca",
         )
-    
+
     return busca
 
 
 @router.get("/", response_model=List[BuscaRead])
 async def listar_buscas(
     session: AsyncSessionDep,
-    skip: int = 0, 
+    skip: int = 0,
     limit: int = 100,
     current_user: Usuario = Depends(get_current_user),
 ):
@@ -102,17 +102,17 @@ async def listar_buscas(
         selectinload(Busca.usuario),
         selectinload(Busca.endereco),
     )
-    
+
     # Restrição para usuários básicos
     if current_user.nivel_acesso == NivelAcesso.basico:
         query = query.where(Busca.id_usuario == current_user.id)
-    
+
     # Aplica paginação
     query = query.offset(skip).limit(limit)
-    
+
     result = await session.execute(query)
     buscas = result.scalars().all()
-    
+
     return buscas
 
 
@@ -133,13 +133,13 @@ async def deletar_busca(
     stmt = select(Busca).where(Busca.id == busca_id)
     result = await session.execute(stmt)
     busca = result.scalar_one_or_none()
-    
+
     if not busca:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Busca não encontrada",
         )
-    
+
     # Verifica permissão
     if current_user.nivel_acesso == NivelAcesso.basico:
         if busca.id_usuario != current_user.id:
@@ -153,9 +153,7 @@ async def deletar_busca(
             detail="Usuários de nível intermediário não podem deletar buscas",
         )
     # Super-usuários podem deletar qualquer busca
-    
+
     # Remove a busca
     await session.delete(busca)
     await session.commit()
-    
-    return None
