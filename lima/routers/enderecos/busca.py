@@ -47,12 +47,13 @@ async def buscar_por_codigo(
 ) -> Union[EnderecoRead, EnderecoReadComplete]:
     """
     Busca um endereço pelo código único
-    
+
     * Requer autenticação
     * O código do endereço é um identificador único por endereço
     * Opcionalmente carrega dados relacionados como operadoras e detentora
     * Registra a busca para fins de auditoria
-    * Retorna EnderecoReadComplete quando load_relations=True, caso contrário EnderecoRead
+    * Retorna EnderecoReadComplete quando load_relations=True, caso contrário
+    * EnderecoRead
     """
     if load_relations:
         stmt = (
