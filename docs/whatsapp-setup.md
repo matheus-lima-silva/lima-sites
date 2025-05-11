@@ -1,6 +1,17 @@
-# Configuração da Integração com WhatsApp
+# Configuração da Integração com WhatsApp (Documentação Preliminar)
 
 Este documento descreve o passo-a-passo para configurar a integração com a API do WhatsApp Cloud (Meta) para o sistema de busca de endereços.
+
+> ⚠️ **ATENÇÃO**: Esta funcionalidade ainda está em fase inicial de desenvolvimento (maio/2025) e não foi completamente implementada. Esta documentação é preliminar e será atualizada conforme o desenvolvimento avança.
+
+## Status de Implementação
+
+- ✅ Configuração básica da API do WhatsApp
+- ✅ Estrutura para recebimento de webhooks
+- 🚧 Comandos para processamento de mensagens (em desenvolvimento)
+- 🚧 Sistema de respostas automáticas (em desenvolvimento)
+- ❌ Templates de mensagens (não iniciado)
+- ❌ Integração com sistema de busca de endereços (não iniciado)
 
 ## Pré-requisitos
 
@@ -99,3 +110,11 @@ Para migrar para a versão de produção:
 - **Webhook não recebe mensagens**: Verifique se a URL é acessível publicamente e se o token de verificação está correto.
 - **Não consegue enviar mensagens**: Verifique se o token de acesso tem permissões corretas e se o número está verificado.
 - **Erro de assinatura do webhook**: Verifique se o App Secret está correto em seu arquivo .env.
+
+## Próximos passos no desenvolvimento
+
+1. Implementar processamento de comandos básicos (maio/2025)
+2. Desenvolver integração com o sistema de busca de endereços (junho/2025)
+3. Implementar sistema de respostas automáticas contextuais (julho/2025)
+4. Testar integração completa (agosto/2025)
+5. Preparação para produção (setembro/2025)

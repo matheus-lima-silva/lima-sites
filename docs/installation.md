@@ -2,13 +2,26 @@
 
 Este guia explica como configurar o Projeto Lima para desenvolvimento local.
 
-> ⚠️ **Aviso**: Este projeto ainda está em desenvolvimento e não é recomendado para uso em produção.
+> ⚠️ **Atualização (Maio/2025)**: Este projeto está em desenvolvimento ativo e pode sofrer mudanças frequentes. Esta documentação foi atualizada em maio de 2025.
+
+## Status de Implementação
+
+- ✅ Sistema de autenticação e controle de acesso
+- ✅ Gerenciamento de usuários e níveis de permissão
+- ✅ CRUD completo de endereços
+- ✅ Sistema de anotações em endereços
+- ✅ Registro de alterações e histórico
+- ✅ Sistema de sugestões
+- ✅ Integração com Telegram
+- 🚧 Integração com WhatsApp (em desenvolvimento)
+- 🚧 Módulo de estatísticas de uso (em desenvolvimento)
 
 ## Pré-requisitos
 
 - Python 3.10 ou superior
 - [Poetry](https://python-poetry.org/) (gerenciador de dependências)
 - [Git](https://git-scm.com/)
+- PostgreSQL 14+ (para ambiente de produção)
 
 ## Instalação Passo a Passo
 
@@ -41,6 +54,13 @@ cp .env.example .env
 # SECRET_KEY=sua_chave_secreta_aqui
 ```
 
+Variáveis de ambiente importantes:
+- `DATABASE_URL`: URL de conexão com o banco de dados
+- `SECRET_KEY`: Chave secreta para assinatura de tokens
+- `DEBUG`: True para ambiente de desenvolvimento, False para produção
+- `ADMIN_PHONE`: Telefone do administrador inicial
+- `ADMIN_NAME`: Nome do administrador inicial
+
 ### 4. Execute as migrações do banco de dados
 
 ```bash
@@ -70,10 +90,14 @@ Com o servidor em execução, você pode acessar:
 - Documentação Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Documentação ReDoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
-## Configuração da integração com WhatsApp (Opcional)
+## Configuração da integração com WhatsApp (Em Desenvolvimento)
 
-Para configurar a integração com WhatsApp, consulte o guia específico:
+> 🚧 **Nota importante**: A integração com WhatsApp está em fase inicial de desenvolvimento (maio/2025) e não está completamente implementada.
+
+A documentação preliminar para a integração com WhatsApp está disponível em:
 [Configuração do WhatsApp](whatsapp-setup.md)
+
+Quando disponível, esta integração permitirá a consulta e gerenciamento de endereços diretamente via mensagens de WhatsApp.
 
 ## Estrutura de Diretórios
 
@@ -86,7 +110,17 @@ lima/
 ├── database.py            # Configuração do banco de dados
 ├── security.py            # Autenticação e segurança
 ├── routers/               # Endpoints da API
+│   ├── auth.py            # Autenticação
+│   ├── usuarios.py        # Gerenciamento de usuários
+│   ├── enderecos.py       # CRUD de endereços
+│   ├── sugestoes.py       # Sistema de sugestões
+│   ├── alteracoes.py      # Registro de alterações
+│   ├── anotacoes.py       # Sistema de anotações
+│   └── ...                # Outros endpoints
 └── services/              # Serviços externos e lógica de negócios
+    ├── ai_service.py      # Serviço de IA para processamento
+    ├── whatsapp.py        # Integração com WhatsApp
+    └── telegram/          # Integração com Telegram
 ```
 
 ## Possíveis Problemas e Soluções
@@ -106,6 +140,16 @@ lima/
 ALEMBIC=1 alembic revision --autogenerate -m "descrição da migração"
 ```
 
+### Erro com dependências do Poetry
+
+**Problema**: Conflitos de dependências ao instalar com Poetry
+
+**Solução**: Atualize o Poetry e tente novamente com:
+```bash
+poetry update
+poetry install --no-dev  # Para instalar apenas dependências de produção
+```
+
 ## Próximos Passos
 
 Após a instalação, você pode:
@@ -117,7 +161,7 @@ Após a instalação, você pode:
 
 2. Explorar a API através da interface Swagger
 
-3. Configurar a integração com WhatsApp para testes
+3. Configurar a integração com Telegram (já implementada) ou WhatsApp (em desenvolvimento)
 
 ## Configuração do Administrador
 

@@ -2,7 +2,7 @@
 
 Esta documentação descreve o sistema de anotações implementado no Projeto Lima, que permite aos usuários adicionar anotações a endereços.
 
-> ⚠️ **Aviso**: Esta funcionalidade é recente e está em desenvolvimento.
+> ✅ **Status**: Esta funcionalidade está totalmente implementada e operacional desde abril/2025.
 
 ## Visão Geral
 
@@ -86,6 +86,12 @@ GET /anotacoes/endereco/{endereco_id}
 GET /anotacoes/usuario/minhas
 ```
 
+### Buscar anotações por texto
+
+```
+GET /anotacoes/busca?query={texto_para_buscar}
+```
+
 ### Atualizar uma anotação
 
 ```
@@ -144,9 +150,9 @@ Um usuário que visitou um endereço pode adicionar uma anotação para informar
 
 ## Integrações Futuras
 
-Planejamos expandir o sistema de anotações para:
+Planejamos expandir o sistema de anotações no segundo semestre de 2025 para incluir:
 
-- Permitir anexar imagens às anotações
-- Implementar sistema de tags para categorização
-- Notificar usuários sobre novas anotações em endereços relevantes
-- Permitir filtrar e buscar dentro do conteúdo das anotações
+- Permitir anexar imagens às anotações (previsto para agosto/2025)
+- Implementar sistema de tags para categorização (previsto para setembro/2025)
+- Notificar usuários sobre novas anotações em endereços relevantes (previsto para outubro/2025)
+- Permitir filtrar e buscar dentro do conteúdo das anotações (implementado em abril/2025)

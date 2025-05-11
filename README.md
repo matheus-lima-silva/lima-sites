@@ -1,11 +1,11 @@
-# Projeto Lima - API de Endereços via WhatsApp
+# Projeto Lima - API de Endereços via WhatsApp e Telegram
 
 ![Status](https://img.shields.io/badge/Status-Em%20Desenvolvimento-yellow)
 ![Versão](https://img.shields.io/badge/Versão-0.1.0-blue)
 
 ## 📋 Descrição
 
-O Projeto Lima é uma API para gestão de endereços com integração ao WhatsApp. Ele permite consultas, sugestões e gerenciamento de endereços através de uma interface RESTful e também via interações por WhatsApp.
+O Projeto Lima é uma API para gestão de endereços com integração ao WhatsApp e Telegram. Ele permite consultas, sugestões e gerenciamento de endereços através de uma interface RESTful e também via interações por mensagens.
 
 > ⚠️ **Aviso**: Este projeto ainda está em desenvolvimento e não deve ser usado em produção.
 
@@ -17,13 +17,14 @@ O Projeto Lima é uma API para gestão de endereços com integração ao WhatsAp
 - ✅ Histórico de alterações em endereços
 - ✅ Anotações vinculadas a endereços
 - ✅ API RESTful para integração com outros sistemas
-- ✅ Interface via WhatsApp para consultas e sugestões
+- 🚧 Interface via WhatsApp para consultas e sugestões (em desenvolvimento)
+- ✅ Interface via Telegram para consultas e sugestões
 
 ## 🛠️ Tecnologias Utilizadas
 
 - **Backend**: FastAPI, SQLAlchemy, Pydantic, Alembic
 - **Banco de Dados**: SQLite (desenvolvimento), PostgreSQL (produção)
-- **Integrações**: API WhatsApp Cloud (Meta)
+- **Integrações**: API WhatsApp Cloud (Meta), API Telegram Bot
 - **Ferramentas**: Poetry (gerenciamento de dependências)
 
 ## 📦 Estrutura do Projeto
@@ -47,7 +48,12 @@ lima/
 └── services/
     ├── ai_service.py      # Serviço de IA para processamento
     ├── whatsapp.py        # Integração com WhatsApp
-    └── whatsapp_commands.py # Comandos para WhatsApp
+    ├── whatsapp_commands.py # Comandos para WhatsApp
+    └── telegram/          # Módulo de integração com Telegram
+        ├── __init__.py    # Exportação da API do módulo
+        ├── core.py        # Funções básicas de comunicação com a API do Telegram
+        ├── commands.py    # Processamento de comandos do Telegram
+        └── registro.py    # Funções para registro de usuários via Telegram
 ```
 
 ## 🔧 Instalação
@@ -57,6 +63,7 @@ lima/
 - Python 3.10+
 - Poetry (gerenciador de dependências)
 - Conta no Facebook Business (para integração com WhatsApp)
+- Bot no Telegram (para integração com Telegram)
 
 ### Instalação para Desenvolvimento
 
@@ -85,6 +92,7 @@ Para mais detalhes sobre a configuração, consulte a [documentação completa](
 
 - [Guia de Instalação](docs/installation.md)
 - [Configuração do WhatsApp](docs/whatsapp-setup.md)
+- [Configuração do Telegram](docs/telegram-setup.md)
 - [Estrutura do Banco de Dados](docs/database.md)
 - [API Reference](docs/api.md)
 - [Guia de Contribuição](docs/contributing.md)
