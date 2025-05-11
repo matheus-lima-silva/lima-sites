@@ -12,14 +12,14 @@ from alembic import context
 
 # Imports atualizados para a nova estrutura de pacotes
 from lima.models import table_registry
-from lima.settings import DATABASE_URL
+from lima.settings import settings  # Importa settings em vez de DATABASE_URL diretamente
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
 # Converte URL assíncrona para síncrona para o Alembic
-sync_url = DATABASE_URL
+sync_url = settings.DATABASE_URL  # Usa settings.DATABASE_URL em vez de DATABASE_URL
 if sync_url.startswith('sqlite+aiosqlite:'):
     sync_url = sync_url.replace('sqlite+aiosqlite:', 'sqlite:')
 elif sync_url.startswith('postgresql+asyncpg:'):
