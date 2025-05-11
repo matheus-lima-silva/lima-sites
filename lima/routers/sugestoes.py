@@ -1,26 +1,29 @@
-from typing import Annotated, List
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from ..database import get_async_session
 from ..models import (
     NivelAcesso,
     StatusSugestao,
     Sugestao,
-    Usuario,
 )
 from ..schemas import SugestaoCreate, SugestaoRead
-from ..security import get_current_user, require_intermediario
+from ..utils.dependencies import (
+    AsyncSessionDep,
+    CurrentUserDep,
+    IdPathDep,
+    IntermediarioUserDep,
+    LimitQueryDep,
+    SkipQueryDep,
+)
+from ..utils.permissions import (
+    verificar_permissao_basica,
+    verificar_permissao_recurso_processado,
+)
 
 router = APIRouter(prefix='/sugestoes', tags=['Sugestões'])
-
-# Definições de dependências usando Annotated
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
-CurrentUserDep = Annotated[Usuario, Depends(get_current_user)]
-IntermediarioUserDep = Annotated[Usuario, Depends(require_intermediario)]
 
 
 @router.post(
@@ -55,7 +58,7 @@ async def criar_sugestao(
 
 @router.get('/{sugestao_id}', response_model=SugestaoRead)
 async def obter_sugestao(
-    sugestao_id: int,
+    sugestao_id: IdPathDep,
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
 ):
@@ -84,15 +87,8 @@ async def obter_sugestao(
             detail='Sugestão não encontrada',
         )
 
-    # Verifica permissão: usuários básicos só podem ver suas próprias sugestões
-    if (
-        current_user.nivel_acesso == NivelAcesso.basico
-        and sugestao.id_usuario != current_user.id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Sem permissão para acessar esta sugestão',
-        )
+    # Usando função centralizada para verificar permissão
+    verificar_permissao_basica(current_user, sugestao.id_usuario, 'sugestão')
 
     return sugestao
 
@@ -101,8 +97,8 @@ async def obter_sugestao(
 async def listar_sugestoes(
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
-    skip: int = 0,
-    limit: int = 100,
+    skip: SkipQueryDep,
+    limit: LimitQueryDep,
 ):
     """
     Lista sugestões com paginação
@@ -132,7 +128,7 @@ async def listar_sugestoes(
 
 @router.put('/{sugestao_id}/aprovar', response_model=SugestaoRead)
 async def aprovar_sugestao(
-    sugestao_id: int,
+    sugestao_id: IdPathDep,
     session: AsyncSessionDep,
     current_user: IntermediarioUserDep,
 ):
@@ -167,7 +163,7 @@ async def aprovar_sugestao(
 
 @router.put('/{sugestao_id}/rejeitar', response_model=SugestaoRead)
 async def rejeitar_sugestao(
-    sugestao_id: int,
+    sugestao_id: IdPathDep,
     session: AsyncSessionDep,
     current_user: IntermediarioUserDep,
 ):
@@ -198,7 +194,7 @@ async def rejeitar_sugestao(
 
 @router.delete('/{sugestao_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def deletar_sugestao(
-    sugestao_id: int,
+    sugestao_id: IdPathDep,
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
 ):
@@ -220,29 +216,21 @@ async def deletar_sugestao(
             detail='Sugestão não encontrada',
         )
 
-    # Verifica permissão
+    # Usando função centralizada para verificar permissão básica
     if current_user.nivel_acesso == NivelAcesso.basico:
-        if sugestao.id_usuario != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail='Sem permissão para deletar esta sugestão',
-            )
-        if sugestao.status != StatusSugestao.pendente:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    'Não é possível deletar sugestões que já foram processadas'
-                ),
-            )
+        verificar_permissao_basica(
+            current_user, sugestao.id_usuario, 'sugestão'
+        )
+
+        # Usando função centralizada para verificar se o recurso já foi processado  # noqa: E501
+        verificar_permissao_recurso_processado(
+            current_user, sugestao.status, StatusSugestao.pendente, 'sugestão'
+        )
     elif current_user.nivel_acesso == NivelAcesso.intermediario:
-        if sugestao.status != StatusSugestao.pendente:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    'Usuários intermediários só podem deletar '
-                    'sugestões pendentes'
-                ),
-            )
+        # Usando função centralizada para verificar se o recurso já foi processado  # noqa: E501
+        verificar_permissao_recurso_processado(
+            current_user, sugestao.status, StatusSugestao.pendente, 'sugestão'
+        )
     # Super-usuários podem deletar qualquer sugestão
 
     # Remove a sugestão

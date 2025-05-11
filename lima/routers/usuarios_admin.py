@@ -1,14 +1,19 @@
 import logging
-from typing import Annotated, List
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import get_async_session
 from ..models import NivelAcesso, Usuario
 from ..schemas import UsuarioRead
-from ..security import require_intermediario, require_super_usuario
+from ..utils.dependencies import (
+    AsyncSessionDep,
+    IdPathDep,
+    IntermediarioUserDep,
+    LimitQueryDep,
+    SkipQueryDep,
+    SuperUserDep,
+)
 
 # Configuração de logging
 logger = logging.getLogger(__name__)
@@ -17,29 +22,13 @@ router = APIRouter(
     prefix='/admin/usuarios', tags=['Administração de Usuários']
 )
 
-# Definições de dependências usando Annotated
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
-IntermediarioUserDep = Annotated[Usuario, Depends(require_intermediario)]
-SuperUserDep = Annotated[Usuario, Depends(require_super_usuario)]
-UsuarioPathDep = Annotated[int, Path(..., ge=1)]
-
-
-def skip_query(skip: int = Query(0, ge=0, title='Registros a pular')):
-    return skip
-
-
-def limit_query(limit: int = Query(100, ge=1, le=100, title='Máx. registros')):
-    return limit
-
-
-SkipQueryDep = Annotated[int, Depends(skip_query)]
-LimitQueryDep = Annotated[int, Depends(limit_query)]
-TelefonePathDep = Annotated[str, Path(..., pattern=r'^\+\d{1,3}\d{8,}$')]
+# Mantendo apenas o que não tem no módulo compartilhado
+TelefonePathDep = IdPathDep  # Aproveitando a validação existente
 
 
 # Função utilitária para validação
 async def get_usuario_or_404(
-    session: AsyncSession, usuario_id: int
+    session: AsyncSessionDep, usuario_id: int
 ) -> Usuario:
     """Busca um usuário pelo ID ou lança 404 se não existir"""
     usuario = await session.scalar(
@@ -78,7 +67,7 @@ async def listar_usuarios(
 async def atualizar_nivel_acesso(
     nivel_acesso: NivelAcesso,
     session: AsyncSessionDep,
-    usuario_id: UsuarioPathDep,
+    usuario_id: IdPathDep,
     current_user: SuperUserDep,
 ):
     """Atualiza nível de acesso (requer super usuário)"""
@@ -109,7 +98,7 @@ async def atualizar_nivel_acesso(
 @router.delete('/{usuario_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def remover_usuario(
     session: AsyncSessionDep,
-    usuario_id: UsuarioPathDep,
+    usuario_id: IdPathDep,
     current_user: SuperUserDep,
 ):
     """Remove um usuário (requer super usuário)"""
@@ -134,7 +123,7 @@ async def remover_usuario(
 @router.get('/por-telefone/{telefone}', response_model=UsuarioRead)
 async def buscar_por_telefone(
     session: AsyncSessionDep,
-    telefone: TelefonePathDep,
+    telefone: str,  # Usando validação de telefone do Path padrão
     current_user: IntermediarioUserDep,
 ):
     """Busca por telefone (requer nível intermediário)"""

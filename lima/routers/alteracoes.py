@@ -1,31 +1,58 @@
-from typing import Annotated, List
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..database import get_async_session
-from ..models import Alteracao, NivelAcesso, Usuario
+from ..models import Alteracao, NivelAcesso
 from ..schemas import AlteracaoCreate, AlteracaoRead
-from ..security import get_current_user, require_intermediario
+from ..utils.dependencies import (
+    AsyncSessionDep,
+    CurrentUserDep,
+    IdPathDep,
+    IntermediarioUserDep,
+    LimitQueryDep,
+    SkipQueryDep,
+)
+from ..utils.permissions import (
+    verificar_permissao_basica,
+    verificar_permissao_intermediaria,
+)
 
-router = APIRouter(prefix="/alteracoes", tags=["Alterações"])
-
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
+router = APIRouter(prefix='/alteracoes', tags=['Alterações'])
 
 
-@router.post("/", response_model=AlteracaoRead, status_code=status.HTTP_201_CREATED)
-async def criar_alteracao(
+@router.post(
+    '/', response_model=AlteracaoRead, status_code=status.HTTP_201_CREATED
+)
+async def registrar_alteracao(
     alteracao: AlteracaoCreate,
     session: AsyncSessionDep,
-    current_user: Usuario = Depends(require_intermediario),  # Requer nível intermediário ou superior
+    current_user: IntermediarioUserDep,
 ):
     """
-    Registra uma alteração no sistema
-    
+    Registra uma alteração realizada em um endereço
+
     * Requer nível de acesso intermediário ou superior
-    * A alteração será associada ao usuário logado
+    * Serve para documentar modificações importantes em dados de endereços
+    * A alteração será associada ao usuário logado e ao endereço especificado
+
+    **Exemplo de payload:**
+    ```json
+    {
+      "id_endereco": 29,
+      "id_usuario": 1,
+      "tipo_alteracao": "atualizacao",
+      "detalhe": "Atualização de coordenadas GPS para maior precisão"
+    }
+    ```
+
+    Os tipos de alteração possíveis são:
+    * **criacao**: Quando um novo endereço foi criado
+    * **atualizacao**: Quando dados de um endereço foram atualizados
+    * **exclusao**: Quando um endereço foi removido
+    * **vinculo_operadora**: Quando uma operadora foi associada ao endereço
+    * **remocao_operadora**: Quando uma operadora foi desvinculada do endereço
     """
     # Cria a nova alteração associando ao usuário atual
     db_alteracao = Alteracao(
@@ -42,15 +69,15 @@ async def criar_alteracao(
     return db_alteracao
 
 
-@router.get("/{alteracao_id}", response_model=AlteracaoRead)
+@router.get('/{alteracao_id}', response_model=AlteracaoRead)
 async def obter_alteracao(
-    alteracao_id: int,
+    alteracao_id: IdPathDep,
     session: AsyncSessionDep,
-    current_user: Usuario = Depends(get_current_user),
+    current_user: CurrentUserDep,
 ):
     """
     Retorna os detalhes de uma alteração específica
-    
+
     * Requer autenticação
     * Usuários básicos só podem acessar suas próprias alterações
     * Usuários intermediários e super_usuários podem ver todas as alterações
@@ -70,30 +97,25 @@ async def obter_alteracao(
     if alteracao is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Alteração não encontrada",
+            detail='Alteração não encontrada',
         )
 
-    # Verifica permissão: usuários básicos só podem ver suas próprias alterações
-    if (current_user.nivel_acesso == NivelAcesso.basico and
-            alteracao.id_usuario != current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sem permissão para acessar esta alteração",
-        )
+    # Usando função centralizada para verificar permissão
+    verificar_permissao_basica(current_user, alteracao.id_usuario, 'alteração')
 
     return alteracao
 
 
-@router.get("/", response_model=List[AlteracaoRead])
+@router.get('/', response_model=List[AlteracaoRead])
 async def listar_alteracoes(
     session: AsyncSessionDep,
-    skip: int = 0,
-    limit: int = 100,
-    current_user: Usuario = Depends(get_current_user),
+    current_user: CurrentUserDep,
+    skip: SkipQueryDep,
+    limit: LimitQueryDep,
 ):
     """
     Lista todas as alterações com paginação
-    
+
     * Requer autenticação
     * Usuários básicos só veem suas próprias alterações
     * Usuários intermediários e super_usuários veem todas as alterações
@@ -117,15 +139,15 @@ async def listar_alteracoes(
     return alteracoes
 
 
-@router.delete("/{alteracao_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete('/{alteracao_id}', status_code=status.HTTP_204_NO_CONTENT)
 async def deletar_alteracao(
-    alteracao_id: int,
+    alteracao_id: IdPathDep,
     session: AsyncSessionDep,
-    current_user: Usuario = Depends(get_current_user),
+    current_user: CurrentUserDep,
 ):
     """
     Remove uma alteração do sistema
-    
+
     * Usuários básicos não podem remover alterações
     * Usuários intermediários podem remover apenas suas próprias alterações
     * Super-usuários podem remover qualquer alteração
@@ -134,7 +156,7 @@ async def deletar_alteracao(
     if current_user.nivel_acesso == NivelAcesso.basico:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Usuários básicos não podem remover alterações",
+            detail='Usuários básicos não podem remover alterações',
         )
 
     # Busca a alteração
@@ -145,16 +167,13 @@ async def deletar_alteracao(
     if alteracao is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Alteração não encontrada",
+            detail='Alteração não encontrada',
         )
 
-    # Verifica permissão para usuários intermediários
-    if (current_user.nivel_acesso == NivelAcesso.intermediario and
-            alteracao.id_usuario != current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Usuários intermediários só podem remover suas próprias alterações",
-        )
+    # Usando função centralizada para verificar permissão de usuários intermediários  # noqa: E501
+    verificar_permissao_intermediaria(
+        current_user, alteracao.id_usuario, 'alteração'
+    )
 
     # Remove a alteração
     await session.delete(alteracao)
