@@ -1,12 +1,12 @@
-from typing import AsyncGenerator
 from datetime import datetime, timezone
+from typing import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy import event
 
 from .settings import Settings
 
@@ -16,11 +16,16 @@ DATABASE_URL = settings.DATABASE_URL
 # Com PostgreSQL, podemos usar totalmente o modo assíncrono
 engine = create_async_engine(
     DATABASE_URL,
-    echo=settings.DEBUG,  # Ativa logs SQL em modo DEBUG
-    pool_size=5,          # Configuração recomendada para PostgreSQL
-    max_overflow=10,      # Permite criar até 10 conexões adicionais quando o pool está cheio
-    pool_timeout=30,      # Timeout para obter uma conexão do pool (em segundos)
-    pool_recycle=1800,    # Recicla conexões após 30 minutos (evita conexões quebradas)
+    # Ativa logs SQL em modo DEBUG
+    echo=settings.DEBUG,
+    # Configuração recomendada para PostgreSQL
+    pool_size=5,
+    # Permite criar até 10 conexões adicionais quando o pool está cheio
+    max_overflow=10,
+    # Tempo máximo de espera para obter uma conexão do pool
+    pool_timeout=30,
+    # Recicla conexões após 30 minutos (evita conexões quebradas)
+    pool_recycle=1800,
     future=True,
 )
 
@@ -32,7 +37,7 @@ async_session = async_sessionmaker(
 
 
 # Configuração para garantir que datetimes sejam sempre tratados com timezone
-@event.listens_for(engine.sync_engine, "connect")
+@event.listens_for(engine.sync_engine, 'connect')
 def set_timezone(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("SET timezone='UTC'")
@@ -41,8 +46,11 @@ def set_timezone(dbapi_connection, connection_record):
 
 # Função para garantir que datetimes sejam sempre gerados com timezone
 def utcnow():
-    """Retorna o datetime atual com timezone UTC."""
-    return datetime.now(timezone.utc)
+    """Retorna o datetime atual sem timezone,
+    para compatibilidade com PostgreSQL."""
+    # Obtém o datetime com timezone UTC e depois remove o timezone
+    # para compatibilidade com colunas do tipo TIMESTAMP WITHOUT TIME ZONE
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
