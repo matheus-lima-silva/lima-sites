@@ -21,7 +21,10 @@ COPY pyproject.toml poetry.lock* ./
 RUN poetry config virtualenvs.create false
 
 # Instalando as dependências
-RUN poetry install --no-interaction --no-ansi
+RUN poetry install --no-interaction --no-ansi --no-root
+
+# Garantindo que o python-telegram-bot seja instalado corretamente
+RUN pip install python-telegram-bot==22.0
 
 # Copiando o resto do código
 COPY . .
