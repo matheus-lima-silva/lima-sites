@@ -9,14 +9,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...database import get_async_session
-from ...models import (
+from ....database import get_async_session
+from ....models import (
     Detentora,
     Operadora,
     Usuario,
 )
-from ...schemas import DetentoraRead, OperadoraRead
-from ...security import get_current_user
+from ....schemas import DetentoraRead, OperadoraRead
+from ....security import get_current_user
 
 router = APIRouter()
 

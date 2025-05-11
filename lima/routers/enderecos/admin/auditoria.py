@@ -9,13 +9,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...database import get_async_session
-from ...models import (
+from ....database import get_async_session
+from ....models import (
     BuscaLog,
     TipoBusca,
     Usuario,
 )
-from ...security import require_super_usuario
+from ....security import require_super_usuario
 
 router = APIRouter()
 

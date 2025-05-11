@@ -10,8 +10,8 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...database import get_async_session
-from ...models import (
+from ....database import get_async_session
+from ....models import (
     BuscaLog,
     Endereco,
     EnderecoOperadora,
@@ -19,8 +19,8 @@ from ...models import (
     TipoEndereco,
     Usuario,
 )
-from ...schemas import EnderecoRead
-from ...security import get_current_user
+from ....schemas import EnderecoRead
+from ....security import get_current_user
 
 router = APIRouter()
 

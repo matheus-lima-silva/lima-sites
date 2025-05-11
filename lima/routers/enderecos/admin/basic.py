@@ -9,8 +9,8 @@ from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...database import get_async_session
-from ...models import (
+from ....database import get_async_session
+from ....models import (
     Alteracao,
     BuscaLog,
     Detentora,
@@ -21,18 +21,18 @@ from ...models import (
     TipoBusca,
     Usuario,
 )
-from ...schemas import (
+from ....schemas import (
     EnderecoCreate,
     EnderecoRead,
     EnderecoReadComplete,
     EnderecoUpdate,
 )
-from ...security import (
+from ....security import (
     get_current_user,
     require_intermediario,
     require_super_usuario,
 )
-from .utils import endereco_to_schema, filtrar_anotacoes_por_acesso
+from ..utils import endereco_to_schema, filtrar_anotacoes_por_acesso
 
 router = APIRouter()
 
@@ -44,8 +44,11 @@ SuperUserDep = Annotated[Usuario, Depends(require_super_usuario)]
 
 
 # Corrigindo a definição do parâmetro Query com função auxiliar
-def load_relations_query(load_relations: bool = Query(False,
-                                 description='Carregar dados relacionados')):
+def load_relations_query(
+    load_relations: bool = Query(
+        False, description='Carregar dados relacionados'
+    ),
+):
     return load_relations
 
 
@@ -81,6 +84,18 @@ async def criar_endereco(
                 endereco.codigo_endereco
             }'",
         )
+
+    # Verifica se há operadoras duplicadas na lista
+    if endereco.operadoras:
+        codigos_operadoras = [op.id for op in endereco.operadoras]
+        if len(codigos_operadoras) != len(set(codigos_operadoras)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    'Não é permitido associar a mesma operadora '
+                    'mais de uma vez ao mesmo endereço'
+                ),
+            )
 
     try:
         # Cria o novo endereço
@@ -363,6 +378,14 @@ async def _processar_detentora(session, endereco, detentora_data):
 
 async def _atualizar_operadoras(session, endereco_id, operadoras_data):
     """Atualiza as operadoras associadas a um endereço"""
+    # Verifica se há operadoras duplicadas na lista
+    codigos_operadoras = [op.id for op in operadoras_data]
+    if len(codigos_operadoras) != len(set(codigos_operadoras)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Não é permitido associar a mesma operadora mais de uma vez ao mesmo endereço',  # noqa: E501
+        )
+
     # Remove todas as associações atuais usando ORM
     await session.execute(
         select(EnderecoOperadora)
@@ -390,6 +413,22 @@ async def _atualizar_operadoras(session, endereco_id, operadoras_data):
             codigo_operadora=op_data.id,
         )
         session.add(endereco_operadora)
+
+    # Atualiza o campo compartilhado baseado na quantidade de operadoras
+    if len(operadoras_data) > 1:
+        # Se tem mais de uma operadora, atualiza o campo compartilhado
+        #  para TRUE
+        endereco = await session.get(Endereco, endereco_id)
+        if endereco and not endereco.compartilhado:
+            endereco.compartilhado = True
+            await session.flush()
+    elif len(operadoras_data) <= 1:
+        # Se tem zero ou uma operadora, atualiza o campo compartilhado
+        #  para FALSE
+        endereco = await session.get(Endereco, endereco_id)
+        if endereco and endereco.compartilhado:
+            endereco.compartilhado = False
+            await session.flush()
 
 
 @router.patch('/{endereco_id}', response_model=EnderecoRead)

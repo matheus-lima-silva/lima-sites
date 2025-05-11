@@ -1,24 +1,38 @@
 """
 Módulo de rotas para gerenciamento de endereços.
-Organiza as operações em módulos menores para melhor manutenção.
+Implementa a estratégia de sub-aplicações (mounts) do FastAPI
+para separar as funcionalidades de busca e administração.
 """
 
-from fastapi import APIRouter
+from fastapi import FastAPI
 
-from .auditoria import router as auditoria_router
-from .auxiliares import router as auxiliares_router
-from .basic import router as basic_router
-from .busca import router as busca_router
-from .estatisticas import router as estatisticas_router
-from .listagem import router as listagem_router
+from .admin import admin_app
+from .busca import busca_app
 
-# Router principal que inclui todos os outros
-router = APIRouter(prefix='/enderecos', tags=['Endereços'])
+# Criamos um router FastAPI vazio para montar as sub-aplicações
+enderecos_app = FastAPI(
+    title='API de Endereços',
+    description='API para gerenciamento de endereços',
+)
 
-# Incluir todos os sub-routers
-router.include_router(basic_router)
-router.include_router(busca_router)
-router.include_router(estatisticas_router)
-router.include_router(auxiliares_router)
-router.include_router(auditoria_router)
-router.include_router(listagem_router)
+# Montamos as sub-aplicações em caminhos específicos
+enderecos_app.mount('/admin', admin_app)
+enderecos_app.mount('/busca', busca_app)
+
+
+# Rota raiz para a aplicação principal de endereços
+@enderecos_app.get('/', tags=['Endereços'])
+async def enderecos_root():
+    """Rota raiz da API de endereços."""
+    return {
+        'message': 'API de Endereços',
+        'sub_apis': [
+            {'nome': 'Administração', 'url': '/admin'},
+            {'nome': 'Busca', 'url': '/busca'},
+        ],
+    }
+
+
+# Exportar enderecos_app como
+#  router para compatibilidade com o import no routers/__init__.py
+router = enderecos_app
