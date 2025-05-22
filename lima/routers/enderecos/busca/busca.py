@@ -93,9 +93,7 @@ async def _registrar_busca(
 
 
 async def _processar_anotacoes(
-    endereco: Endereco,
-    current_user: Usuario,
-    session: AsyncSession
+    endereco: Endereco, current_user: Usuario, session: AsyncSession
 ) -> List[AnotacaoResumida]:
     """Helper function to process annotations"""
     anotacoes_resumidas = []
@@ -376,6 +374,7 @@ async def buscar_por_operadora(
                         # e codigo_operadora
                         op = OperadoraSimples(
                             nome=eo.operadora.nome,
+                            codigo=eo.operadora.codigo,
                             codigo_operadora=eo.codigo_operadora,
                         )
                         operadoras_list.append(op)

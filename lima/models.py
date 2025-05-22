@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import ForeignKey, func
+from sqlalchemy import BigInteger, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, registry, relationship
 
 from .database import utcnow
@@ -68,7 +68,15 @@ class Usuario:
     __tablename__ = 'usuarios'
 
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
-    telefone: Mapped[str] = mapped_column(unique=True)
+    email: Mapped[str | None] = mapped_column(
+        unique=True, nullable=True, index=True, default=None
+    )  # Adicionado para login
+    telegram_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, unique=True, nullable=True, index=True, default=None
+    )  # Adicionado para ID do Telegram, agora como BigInteger
+    telefone: Mapped[str | None] = mapped_column(
+        unique=False, default=None, nullable=True
+    )  # Garante que nullable=True seja explícito
     nivel_acesso: Mapped[NivelAcesso] = mapped_column(
         default=NivelAcesso.basico
     )

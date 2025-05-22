@@ -4,10 +4,15 @@ from typing import Annotated, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from ..models import Anotacao, Endereco, NivelAcesso
 from ..schemas import AnotacaoCreate, AnotacaoRead, AnotacaoUpdate
+from ..utils.decorators import (
+    handle_not_found,
+    log_operation,
+    require_permission,
+)
 from ..utils.dependencies import (
     AsyncSessionDep,
     CurrentUserDep,
@@ -17,10 +22,7 @@ from ..utils.dependencies import (
     SkipQueryDep,
     create_order_by_dependency,
 )
-from ..utils.permissions import (
-    validar_acesso_por_nivel,
-    verificar_permissao_basica,
-)
+from ..utils.resource_validators import get_resource_or_none
 
 router = APIRouter(prefix='/anotacoes', tags=['Anotações'])
 
@@ -105,17 +107,20 @@ async def criar_anotacao(
 async def listar_minhas_anotacoes(
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
-    query_params: Annotated[dict, Depends(
-        lambda order_by=AnotacaoOrderByDep,
-        desc=OrderDescQueryDep,
-        skip=SkipQueryDep,
-        limit=LimitQueryDep: {
-            'order_by': order_by,
-            'desc': desc,
-            'skip': skip,
-            'limit': limit,
-        }
-    )],
+    query_params: Annotated[
+        dict,
+        Depends(
+            lambda order_by=AnotacaoOrderByDep,
+            desc=OrderDescQueryDep,
+            skip=SkipQueryDep,
+            limit=LimitQueryDep: {
+                'order_by': order_by,
+                'desc': desc,
+                'skip': skip,
+                'limit': limit,
+            }
+        ),
+    ],
 ):
     """
     Lista todas as anotações feitas pelo usuário atual
@@ -157,12 +162,15 @@ async def listar_anotacoes_do_endereco(
     endereco_id: int,
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
-    query_params: Annotated[dict, Depends(
-        lambda order_by=AnotacaoOrderByDep, desc=OrderDescQueryDep: {
-            'order_by': order_by,
-            'desc': desc,
-        }
-    )],
+    query_params: Annotated[
+        dict,
+        Depends(
+            lambda order_by=AnotacaoOrderByDep, desc=OrderDescQueryDep: {
+                'order_by': order_by,
+                'desc': desc,
+            }
+        ),
+    ],
 ):
     """
     Lista todas as anotações de um endereço específico
@@ -265,6 +273,12 @@ async def buscar_anotacoes(
 
 # As rotas com parâmetros genéricos devem vir após as rotas específicas
 @router.get('/{anotacao_id}', response_model=AnotacaoRead)
+@log_operation('obter_anotacao')
+@handle_not_found('anotação')
+@require_permission(
+    [NivelAcesso.intermediario, NivelAcesso.super_usuario],
+    owner_field='id_usuario',
+)
 async def obter_anotacao(
     anotacao_id: IdPathDep,
     session: AsyncSessionDep,
@@ -275,33 +289,31 @@ async def obter_anotacao(
 
     * Requer autenticação
     * Usuários básicos só podem ver suas próprias anotações
+    * Usuários intermediários e super_usuários podem ver todas as anotações
     """
-    # Carregando a anotação com suas relações em uma única consulta eficiente
-    stmt = (
-        select(Anotacao)
-        .options(joinedload(Anotacao.endereco), joinedload(Anotacao.usuario))
-        .where(Anotacao.id == anotacao_id)
-    )
-    anotacao = await session.scalar(stmt)
+    # Usando a função utilitária para buscar o recurso com relações
 
-    if not anotacao:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Anotação não encontrada',
-        )
+    options = [selectinload(Anotacao.endereco), selectinload(Anotacao.usuario)]
 
-    # Usando função centralizada para verificar permissão
-    validar_acesso_por_nivel(
-        current_user,
-        anotacao,
-        campo_id_usuario='id_usuario',
-        recurso='anotação',
+    anotacao = await get_resource_or_none(
+        session, Anotacao, {'id': anotacao_id}, options
     )
+
+    # O decorator handle_not_found já lida com o caso de anotação não
+    # encontrada
+    # A verificação de permissão agora é feita pelo
+    #  decorator require_permission
 
     return anotacao
 
 
 @router.put('/{anotacao_id}', response_model=AnotacaoRead)
+@log_operation('atualizar_anotacao')
+@handle_not_found('anotação')
+@require_permission(
+    [NivelAcesso.intermediario, NivelAcesso.super_usuario],
+    owner_field='id_usuario',
+)
 async def atualizar_anotacao(
     anotacao_id: int,
     anotacao_update: AnotacaoUpdate,
@@ -317,24 +329,20 @@ async def atualizar_anotacao(
       podem atualizar qualquer anotação
     """
     async with session.begin():
-        # Obtenção da anotação com lock para atualização
-        stmt = (
-            select(Anotacao)
-            .where(Anotacao.id == anotacao_id)
-            .with_for_update()  # Lock otimista para concorrência
-        )
-        anotacao = await session.scalar(stmt)
+        # Usando a função utilitária para buscar o recurso
 
-        if not anotacao:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Anotação não encontrada',
-            )
-
-        # Usando função centralizada para verificar permissão
-        verificar_permissao_basica(
-            current_user, anotacao.id_usuario, 'anotação'
+        anotacao = await get_resource_or_none(
+            session,
+            Anotacao,
+            {'id': anotacao_id},
+            with_for_update=True,  # Lock otimista para concorrência
         )
+
+        # O decorator handle_not_found já lida com o caso de
+        #  anotação não encontrada
+
+        # A verificação de permissão agora é
+        #  feita pelo decorator require_permission
 
         # Atualiza os campos da anotação
         anotacao.texto = anotacao_update.texto
@@ -346,6 +354,12 @@ async def atualizar_anotacao(
 
 
 @router.delete('/{anotacao_id}', status_code=status.HTTP_204_NO_CONTENT)
+@log_operation('deletar_anotacao')
+@handle_not_found('anotação')
+@require_permission(
+    [NivelAcesso.intermediario, NivelAcesso.super_usuario],
+    owner_field='id_usuario',
+)
 async def deletar_anotacao(
     anotacao_id: int,
     session: AsyncSessionDep,
@@ -359,24 +373,19 @@ async def deletar_anotacao(
     * Usuários intermediários e super_usuários podem remover qualquer anotação
     """
     async with session.begin():
-        # Obtenção da anotação com lock para exclusão
-        stmt = (
-            select(Anotacao)
-            .where(Anotacao.id == anotacao_id)
-            .with_for_update()  # Lock para evitar condições de corrida
-        )
-        anotacao = await session.scalar(stmt)
+        # Usando a função utilitária para buscar o recurso
 
-        if not anotacao:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Anotação não encontrada',
-            )
-
-        # Usando função centralizada para verificar permissão
-        verificar_permissao_basica(
-            current_user, anotacao.id_usuario, 'anotação'
+        anotacao = await get_resource_or_none(
+            session,
+            Anotacao,
+            {'id': anotacao_id},
+            with_for_update=True,  # Lock para evitar condições de corrida
         )
+
+        # O decorator handle_not_found já lida com o
+        #  caso de anotação não encontrada
+        # A verificação de permissão agora é
+        #  feita pelo decorator require_permission
 
         await session.delete(anotacao)
 
