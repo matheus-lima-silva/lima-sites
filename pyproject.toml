@@ -20,6 +20,8 @@ tzdata = ">=2025.2,<2026.0"
 python-dotenv = ">=1.1.0,<2.0.0"
 python-telegram-bot = "^22.0"
 python-jose = "^3.4.0"
+apscheduler = "^3.11.0"
+httpx = "^0.28.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
@@ -68,6 +70,9 @@ ngrok = 'ngrok http 8000'
 webhook-config = 'python configure_webhook.py'
 webhook-setup = { cmd = "echo 'Iniciando configuração do webhook do WhatsApp...' && task webhook-config", help = "Configura o webhook do WhatsApp" }
 webhook-dev = { cmd = "python webhook_dev.py", help = "Inicia ambiente de desenvolvimento com ngrok e servidor" }
+telegram-webhook = { cmd = "python configure_telegram_webhook.py", help = "Configura o webhook do Telegram" }
+telegram-webhook-info = { cmd = "python configure_telegram_webhook.py --info", help = "Mostra informações sobre o webhook do Telegram" }
+telegram-webhook-delete = { cmd = "python configure_telegram_webhook.py --delete", help = "Remove o webhook do Telegram" }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

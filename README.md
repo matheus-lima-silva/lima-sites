@@ -18,14 +18,15 @@ O Projeto Lima é uma API para gestão de endereços com integração ao WhatsAp
 - ✅ Anotações vinculadas a endereços
 - ✅ API RESTful para integração com outros sistemas
 - 🚧 Interface via WhatsApp para consultas e sugestões (em desenvolvimento)
-- ✅ Interface via Telegram para consultas e sugestões
+- ✅ Interface via Telegram com suporte a múltiplos comandos e anotações
 
 ## 🛠️ Tecnologias Utilizadas
 
 - **Backend**: FastAPI, SQLAlchemy, Pydantic, Alembic
 - **Banco de Dados**: SQLite (desenvolvimento), PostgreSQL (produção)
 - **Integrações**: API WhatsApp Cloud (Meta), API Telegram Bot
-- **Ferramentas**: Poetry (gerenciamento de dependências)
+- **Ferramentas**: Poetry (gerenciamento de dependências), Ruff (linting)
+- **Testes**: Pytest, Coverage
 
 ## 📦 Estrutura do Projeto
 
@@ -37,6 +38,7 @@ lima/
 ├── settings.py            # Configurações e variáveis de ambiente
 ├── database.py            # Configuração do banco de dados
 ├── security.py            # Autenticação e segurança
+├── scheduler.py           # Agendador de tarefas
 ├── routers/               # Endpoints da API
 │   ├── auth.py            # Autenticação
 │   ├── usuarios.py        # Gerenciamento de usuários
@@ -51,9 +53,16 @@ lima/
     ├── whatsapp_commands.py # Comandos para WhatsApp
     └── telegram/          # Módulo de integração com Telegram
         ├── __init__.py    # Exportação da API do módulo
-        ├── core.py        # Funções básicas de comunicação com a API do Telegram
-        ├── commands.py    # Processamento de comandos do Telegram
-        └── registro.py    # Funções para registro de usuários via Telegram
+        ├── core.py        # Funções básicas de comunicação com a API
+        ├── commands.py    # Gerenciamento de comandos
+        ├── formatters.py  # Formatação de mensagens
+        ├── conversation.py # Gerenciamento de conversas
+        ├── registro.py    # Funções para registro de usuários
+        └── handlers/      # Handlers para diferentes tipos de comandos
+            ├── annotation_commands.py  # Comandos de anotação
+            ├── search_commands.py      # Comandos de busca
+            ├── detail_commands.py      # Comandos de detalhes
+            └── basic_commands.py       # Comandos básicos
 ```
 
 ## 🔧 Instalação
@@ -84,6 +93,9 @@ poetry run alembic upgrade head
 
 # Inicie o servidor de desenvolvimento
 poetry run uvicorn lima.app:app --reload
+
+# Para configurar o webhook do Telegram (opcional)
+poetry run python configure_telegram_webhook.py
 ```
 
 Para mais detalhes sobre a configuração, consulte a [documentação completa](docs/README.md).
@@ -93,8 +105,11 @@ Para mais detalhes sobre a configuração, consulte a [documentação completa](
 - [Guia de Instalação](docs/installation.md)
 - [Configuração do WhatsApp](docs/whatsapp-setup.md)
 - [Configuração do Telegram](docs/telegram-setup.md)
+- [Configuração do Webhook do Telegram](docs/telegram-webhook-guide.md)
+- [Sistema de Anotações via Telegram](docs/telegram-anotacoes.md)
 - [Estrutura do Banco de Dados](docs/database.md)
 - [API Reference](docs/api.md)
+- [Guia de Testes](docs/testing-guide.md)
 - [Guia de Contribuição](docs/contributing.md)
 
 ## 📝 Licença
@@ -103,4 +118,4 @@ Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICE
 
 ## ✒️ Autores
 
-- **Desenvolvedor Principal** - [Seu Nome](https://github.com/seu-usuario)
+- **Desenvolvedor Principal** - [Matheus Lima](https://github.com/matheus-lima-silva)

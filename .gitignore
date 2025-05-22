@@ -203,6 +203,22 @@ secrets.json
 # WhatsApp development files
 webhook_dev.py
 
+# Arquivos de refatoração e planejamento
+plano_migracao_handlers.md
+plano_refatoracao_telegram.txt
+relatorio_correcao_erros_interface.md
+relatorio_correcao_erros_interface2.md
+relatorio_correcao_funcao_asincrona.md
+relatorio_duplicacoes_codigo.md
+relatorio_final_correcoes.md
+resumo_atividades_*.md
+resumo_fase*.md
+migrations/
 # Generated using ignr.py - github.com/Antrikshy/ignr.py
 
 planejamento_enderecos.txt
+configure_telegram_webhook.py
+plano_refatoracao_telegram.txt
+
+# ... outras entradas do .gitignore ...
+investigacao_db_otimizacao_continuacao.txt

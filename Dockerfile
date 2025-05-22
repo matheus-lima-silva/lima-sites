@@ -2,6 +2,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Copiando arquivos de dependência primeiro para melhor cache
+COPY pyproject.toml poetry.lock* ./
+
 # Instalando dependências do sistema necessárias para o psycopg
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -12,21 +15,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalando o Poetry
-RUN pip install poetry==1.8.2
-
-# Copiando arquivos de configuração do Poetry
-COPY pyproject.toml poetry.lock* ./
+RUN pip install poetry==1.8.2 wheel
 
 # Configurando o Poetry para não criar um ambiente virtual
 RUN poetry config virtualenvs.create false
 
-# Instalando as dependências
-RUN poetry install --no-interaction --no-ansi --no-root
+# Instalando as dependências principais (sem dev)
+RUN poetry install --no-interaction --no-ansi --without dev
 
-# Garantindo que o python-telegram-bot seja instalado corretamente
-RUN pip install python-telegram-bot==22.0
-
-# Copiando o resto do código
+# Copiando o resto do código (após dependências para cache)
 COPY . .
 
 # Garantir que o entrypoint.sh seja executável
