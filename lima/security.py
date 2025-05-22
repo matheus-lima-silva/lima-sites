@@ -1,23 +1,12 @@
-import hashlib
-import hmac
-import json
 import logging
-import re
-import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from http import HTTPStatus
-from typing import NamedTuple, Optional, Tuple
+from typing import Optional
 
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jwt import (
-    DecodeError,
-    ExpiredSignatureError,
-    decode,
-    encode,
-)
-from sqlalchemy import select, update
+from jwt import DecodeError, ExpiredSignatureError, decode, encode
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_async_session, utcnow
@@ -28,737 +17,399 @@ settings = Settings()
 logger = logging.getLogger(__name__)
 algorithms = getattr(settings, 'ALGORITHMS', ['HS256'])
 
-# Regex para validar números de telefone no formato internacional
-PHONE_REGEX = re.compile(r'^\+[1-9]\d{1,14}$')
-
-# Rate limiting para prevenir ataques de força bruta
-# Carrega as configurações das variáveis de ambiente
+# Rate limiting
 RATE_LIMIT_WINDOW = getattr(settings, 'RATE_LIMIT_WINDOW', 300)
-# 5 minutos
 MAX_LOGIN_ATTEMPTS = getattr(settings, 'MAX_LOGIN_ATTEMPTS', 5)
-# Máximo de tentativas
-
-# Armazena tentativas de login por IP e por número de telefone
 login_attempts = defaultdict(lambda: {'count': 0, 'last_attempt': 0})
-failed_logins = defaultdict(int)
 
-# Tempo de espera após muitas tentativas (em segundos)
-
-
-def is_rate_limited(identifier: str) -> Tuple[bool, int]:
-    """
-    Verifica se um identificador (IP ou telefone) está bloqueado por tentativas
-      excessivas
-    Retorna (está_bloqueado, tempo_restante_bloqueio)
-    """
-    now = time.time()
-    attempts = login_attempts[identifier]
-
-    # Se nunca tentou antes, não está bloqueado
-    if attempts['count'] == 0:
-        return False, 0
-
-    # Verifica se já passou o tempo de bloqueio
-    time_passed = now - attempts['last_attempt']
-    if (
-        attempts['count'] >= MAX_LOGIN_ATTEMPTS
-        and time_passed < RATE_LIMIT_WINDOW
-    ):
-        # Ainda está bloqueado
-        return True, int(RATE_LIMIT_WINDOW - time_passed)
-
-    # Se passou o tempo do bloqueio, reinicia as tentativas
-    if time_passed > RATE_LIMIT_WINDOW:
-        attempts['count'] = 0
-
-    return False, 0
+bearer_scheme = HTTPBearer()
 
 
-def record_login_attempt(identifier: str, success: bool) -> None:
-    """Registra uma tentativa de login para fins de rate limiting"""
-    now = time.time()
-    attempts = login_attempts[identifier]
-
-    # Atualiza o último momento da tentativa
-    attempts['last_attempt'] = now
-
-    # Se foi bem sucedido, reinicia a contagem
-    if success:
-        attempts['count'] = 0
-        return
-
-    # Incrementa a contagem de tentativas falhas
-    attempts['count'] += 1
-
-
-# Validação de webhook para WhatsApp e Telegram
-def validate_webhook_signature(
-    body: bytes, signature: str, secret: str
-) -> bool:
-    """
-    Valida a assinatura de um webhook
-
-    Args:
-        body: O corpo da requisição em bytes
-        signature: A assinatura fornecida pelo webhook
-        secret: O segredo compartilhado para verificar a assinatura
-
-    Returns:
-        bool: True se a assinatura for válida, False caso contrário
-    """
-    if not signature or not secret:
-        return False
-
-    # Formato: sha256=hex_digest
-    if signature.startswith('sha256='):
-        signature = signature.replace('sha256=', '')
-
-    # Calcula o HMAC com SHA-256
-    expected_sig = hmac.new(
-        secret.encode(), msg=body, digestmod=hashlib.sha256
-    ).hexdigest()
-
-    # Compara usando um método seguro de comparação de tempo constante
-    return hmac.compare_digest(expected_sig, signature)
-
-
-def create_whatsapp_token(phone_number: str):
-    """Cria um token de acesso baseado no número do WhatsApp"""
+def create_access_token(user_id: int) -> str:
+    """Cria um token de acesso JWT para o usuário."""
     now = datetime.now(timezone.utc)
     to_encode = {
-        'sub': phone_number,
+        'sub': str(user_id),
         'iat': now,
         'exp': now + timedelta(days=settings.ACCESS_TOKEN_EXPIRE_DAYS),
+        'type': 'telegram_user',
     }
-    encoded_jwt = encode(to_encode, settings.SECRET_KEY, algorithm='HS256')
+    encoded_jwt = encode(
+        to_encode, settings.SECRET_KEY, algorithm=algorithms[0]
+    )
     return encoded_jwt
 
 
-def validate_phone_number(phone_number: str) -> bool:
-    """Valida se o número de telefone está em formato internacional válido"""
-    return bool(PHONE_REGEX.match(phone_number))
+async def _create_new_user_instance(
+    telegram_user_id: int,
+    name: Optional[str],
+    expected_phone: str,
+    current_time: datetime, # Mantido para possível uso futuro, mas não passado ao construtor diretamente
+    session: AsyncSession,
+) -> Usuario:
+    """Cria uma nova instância de usuário, mas não faz commit."""
+    logger.info(f'Usuário com Telegram ID {telegram_user_id} não encontrado. Criando.')
+    user = Usuario(
+        telegram_user_id=telegram_user_id,
+        telefone=expected_phone,
+        nome=name,
+        nivel_acesso=NivelAcesso.basico,
+        # last_seen não é mais passado aqui, pois init=False no modelo
+        # e server_default=func.now() deve cuidar da inicialização.
+        # Se current_time for diferente de func.now()
+        #  e precisar ser definido especificamente,
+        # faremos isso após a instanciação: user.last_seen = current_time
+    )
+    # Se você precisar que last_seen seja EXATAMENTE current_time na criação:
+    user.last_seen = current_time
+    session.add(user)
+    return user
 
 
-async def verify_whatsapp_origin(
-    phone_number: str,
-    whatsapp_id: str = None,
-    request: Request = None,
-    signature: str = None,
-) -> bool:
-    """
-    Verifica se a solicitação veio realmente do WhatsApp.
-
-    Args:
-        phone_number: Número de telefone do remetente
-        whatsapp_id: ID da conta do WhatsApp Business
-        request: Objeto da requisição para verificações adicionais
-        signature: Assinatura HMAC do webhook
-
-    Returns:
-        bool: True se a origem for válida, False caso contrário
-    """
-    # Validação básica do número de telefone
-    if not phone_number or not validate_phone_number(phone_number):
-        logger.warning(f'Número de telefone inválido: {phone_number}')
-        return False
-
-    # Verificações de segurança em ambiente de produção
-    # Reorganizadas para reduzir o número de returns
-
-    # 1. Verificar ID do WhatsApp Business
-    if settings.VERIFY_WHATSAPP_ID:
-        if not whatsapp_id:
-            logger.warning('ID do WhatsApp não fornecido')
-            return False
-
-        if whatsapp_id not in settings.ALLOWED_WHATSAPP_IDS:
-            logger.warning(f'ID do WhatsApp não autorizado: {whatsapp_id}')
-            return False
-
-    # 2. Verificar assinatura HMAC (se fornecida)
-    if settings.VERIFY_WHATSAPP_SIGNATURE and request and signature:
-        valid_signature = await _verify_signature(request, signature)
-        if not valid_signature:
-            return False
-
-    # 3. Verificar timestamp da mensagem para evitar replay attacks
-    if settings.VERIFY_WHATSAPP_TIMESTAMP and request:
-        valid_timestamp = await _verify_timestamp(request)
-        if not valid_timestamp:
-            return False
-
-    # Se passou por todas as verificações aplicáveis
-    return True
+async def _update_existing_user_fields(
+    user: Usuario,
+    name: Optional[str],
+    expected_phone: str,
+    current_time: datetime,
+) -> tuple[bool, list[str]]:
+    """Atualiza os campos de um usuário existente se necessário."""
+    needs_commit = False
+    updated_fields = []
+    if name and user.nome != name:
+        user.nome = name
+        updated_fields.append('nome')
+        needs_commit = True
+    if user.telefone != expected_phone:
+        user.telefone = expected_phone
+        updated_fields.append('telefone')
+        needs_commit = True
+    if user.last_seen != current_time:  # Compara com o tempo da chamada atual
+        user.last_seen = current_time
+        updated_fields.append('last_seen')
+        needs_commit = True
+    return needs_commit, updated_fields
 
 
-async def _verify_signature(request: Request, signature: str) -> bool:
-    """Auxiliar para verificar assinatura do webhook"""
+async def _commit_user_changes_and_log(
+    user: Usuario,
+    session: AsyncSession,
+    is_new_user: bool,
+    updated_fields: list[str],
+    telegram_user_id: int,  # Adicionado para logging em caso de erro
+):
+    """Faz commit das alterações do usuário e registra o log."""
     try:
-        # Recupera o corpo da requisição
-        body = await request.body()
-
-        # Verifica a assinatura com nosso segredo compartilhado
-        if not validate_webhook_signature(
-            body, signature, settings.WHATSAPP_WEBHOOK_SECRET
-        ):
-            logger.warning('Assinatura de webhook inválida')
-            return False
-    except Exception as e:
-        logger.error(f'Erro ao verificar assinatura: {e}')
-        return False
-
-    return True
-
-
-async def _verify_timestamp(request: Request) -> bool:
-    """Auxiliar para verificar timestamp do webhook"""
-    try:
-        body = await request.json()
-        timestamp = body.get('entry', [{}])[0].get('time')
-
-        if not timestamp:
-            logger.warning('Timestamp não encontrado na requisição')
-            return False
-
-        # Converte para datetime
-        msg_time = datetime.fromtimestamp(
-            timestamp / 1000, tz=timezone.utc
-        )
-        now = datetime.now(timezone.utc)
-
-        # Definimos uma constante para o tempo máximo aceitável
-        MAX_TIMESTAMP_DIFF_SECONDS = (
-            settings.MAX_TIMESTAMP_DIFF_SECONDS
-            if hasattr(settings, 'MAX_TIMESTAMP_DIFF_SECONDS')
-            else 300
-        )
-
-        # Rejeita mensagens antigas ou futuras
-        if (
-            abs((now - msg_time).total_seconds())
-            > MAX_TIMESTAMP_DIFF_SECONDS
-        ):
-            logger.warning(
-                f'Timestamp inválido: {msg_time} (agora: {now})'
+        await session.commit()
+        await session.refresh(user)
+        log_msg_parts = [f'ID={user.id}']
+        if is_new_user:
+            log_msg_parts.append(f"Nome='{user.nome}'")
+            log_msg_parts.append(f"Telefone='{user.telefone}'")
+            last_seen_iso = (
+                user.last_seen.isoformat() if user.last_seen else 'N/A'
             )
-            return False
+            log_msg_parts.append(f'LastSeen={last_seen_iso}')
+            logger.info(f'Novo usuário criado: {", ".join(log_msg_parts)}.')
+        elif updated_fields:
+            for field_name in updated_fields:  # Renomeado para field_name
+                val = getattr(user, field_name)
+                if isinstance(val, datetime):
+                    val = val.isoformat()
+                log_msg_parts.append(f"{field_name}='{val}'")
+            logger.info(f'Usuário atualizado: {", ".join(log_msg_parts)}.')
     except Exception as e:
-        logger.error(f'Erro ao verificar timestamp: {e}')
-        # Em produção, você pode decidir se falha aberta ou fechada
-        return False
-
-    return True
-
-
-# Esquema de segurança personalizado para WhatsApp
-class WhatsAppBearer(HTTPBearer):
-    def __init__(self, auto_error: bool = True):
-        super().__init__(auto_error=auto_error)
-
-    async def __call__(
-        self, request: Request, x_whatsapp_phone: str = Header(None)
-    ) -> HTTPAuthorizationCredentials:
-        credentials = await super().__call__(request)
-
-        if credentials:
-            # Se o cabeçalho x_whatsapp_phone está presente, valida a origem
-            # do WhatsApp
-            if x_whatsapp_phone:
-                is_valid = await verify_whatsapp_origin(x_whatsapp_phone)
-                if not is_valid:
-                    raise HTTPException(
-                        status_code=HTTPStatus.UNAUTHORIZED,
-                        detail='Origem do WhatsApp inválida',
-                    )
-            return credentials
-
-        raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED,
-            detail='Credenciais inválidas',
-        )
+        await session.rollback()
+        op_type = 'criação' if is_new_user else 'atualização'
+        fields_log = ', '.join(updated_fields) or 'N/A'
+        # Garante que user.id seja acessado apenas se user não for None
+        user_pk_id_for_log = user.id if user and hasattr(user, 'id') and user.id is not None else telegram_user_id
+        log_line_1 = f'Erro no commit para usuário (telegram_id={telegram_user_id}, pk_id_tentativo={user_pk_id_for_log}) '
+        log_line_2 = f'(op: {op_type}, campos: {fields_log}): {e}.'
+        logger.warning(log_line_1 + log_line_2, exc_info=True)  # Adicionado exc_info=True
 
 
-whatsapp_scheme = WhatsAppBearer()
-
-
-async def get_auto_user_by_phone(
-    phone_number: str,
+async def get_or_create_user(
+    telegram_user_id: int,
+    phone_number: Optional[str],  # Mantido, mas não usado
+    name: Optional[str],
     session: AsyncSession,
     create_if_not_exists: bool = True,
-):
+) -> Usuario:
     """
-    Obtém usuário pelo número do telefone ou cria automaticamente
-    se não existir e a flag create_if_not_exists for True
+    Obtém um usuário pelo telegram_user_id ou cria um novo.
     """
-    # Primeira tentativa de localizar o usuário
-    stmt = select(Usuario).where(Usuario.telefone == phone_number)
-    result = await session.execute(stmt)
+    # Busca pelo campo correto, não pela PK
+    result = await session.execute(
+        select(Usuario).where(Usuario.telegram_user_id == telegram_user_id)
+    )
     user = result.scalar_one_or_none()
-
-    is_new_user = False  # Flag para indicar se é um usuário novo
+    is_new_user = False
+    needs_commit = False
+    updated_fields: list[str] = []  # Inicializa como lista vazia
+    current_time = utcnow()
+    expected_phone = f'telegram_{telegram_user_id}'
 
     if not user and create_if_not_exists:
         try:
-            # Certifique-se de que o campo `id` não seja passado ao criar o
-            #  objeto `Usuario`
-            user = Usuario(
-                telefone=phone_number, nivel_acesso=NivelAcesso.basico
+            user = await _create_new_user_instance(
+                telegram_user_id, name, expected_phone, current_time, session
             )
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
-            is_new_user = True  # Marca como usuário novo
-        except Exception:
-            # Em caso de erro (possível violação de unicidade
-            # se outro processo criou o mesmo usuário)
+            needs_commit = True
+            is_new_user = True
+        except Exception as e:
             await session.rollback()
+            log_err_create_1 = f'Erro ao instanciar/adicionar usuário ID {
+                telegram_user_id
+            }. Exceção: {e}. '
+            # Modificado para incluir exc_info=True para traceback completo
+            logger.error(log_err_create_1, exc_info=True) # Log da falha inicial na criação
 
-            # Tenta buscar novamente após falha na criação
-            result = await session.execute(stmt)
+            # Tentando buscar novamente.
+            logger.info(f'Tentando buscar usuário ID {telegram_user_id} novamente após falha na criação.')
+            # Busca novamente pelo campo correto
+            result = await session.execute(
+                select(Usuario).where(
+                    Usuario.telegram_user_id == telegram_user_id
+                )
+            )
             user = result.scalar_one_or_none()
-
-            # Se ainda não encontrou, propaga o erro
             if not user:
-                # Em produção, adicione logging aqui
-                raise
+                log_crit_create = f'Falha crítica ao obter/criar usuário ID {
+                    telegram_user_id
+                }.'
+                logger.error(log_crit_create)
+                # Adicionando log extra da exceção 'e' original com traceback
+                logger.error(
+                    f"Exceção original 'e' que levou à falha crítica na criação do usuário {telegram_user_id}: {type(e).__name__}: {str(e)}",
+                    exc_info=True
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Não foi possível criar ou obter o usuário.',
+                ) from e
+            log_info_create = f'Usuário ID {
+                telegram_user_id
+            } encontrado após rollback na criação.'
+            logger.info(log_info_create)
+            is_new_user = False
+            needs_commit = False
 
-    # Adiciona a propriedade is_new ao objeto do usuário
-    if user and is_new_user:
-        setattr(user, 'is_new', True)
-    else:
-        setattr(user, 'is_new', False)
+    elif not user and not create_if_not_exists:
+        log_warn_not_found = f'Usuário ID {
+            telegram_user_id
+        } não encontrado (criação desabilitada).'
+        logger.warning(log_warn_not_found)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Usuário com ID {telegram_user_id} não encontrado.',
+        )
 
+    # Se o usuário existe ou foi recuperado após falha na criação
+    if user and not is_new_user:
+        commit_needed, fields = await _update_existing_user_fields(
+            user, name, expected_phone, current_time
+        )
+        if commit_needed:
+            needs_commit = True
+            updated_fields = fields
+
+    if needs_commit and user:
+        await _commit_user_changes_and_log(
+            user, session, is_new_user, updated_fields, telegram_user_id
+        )
+
+    if not user:  # Checagem final de segurança
+        logger.error(
+            f"Crítico: 'user' é None no final de get_or_create_user "
+            f'para ID {telegram_user_id} sem exceção prévia.'
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro inesperado ao processar dados do usuário.',
+        )
+
+    setattr(user, 'is_new', is_new_user)
     return user
 
 
 async def get_current_user(
     session: AsyncSession = Depends(get_async_session),
-    credentials: HTTPAuthorizationCredentials = Depends(whatsapp_scheme),
-):
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(
+        bearer_scheme
+    ),
+) -> Usuario:
     """
-    Obtém o usuário atual baseado no token de autenticação do WhatsApp
+    Obtém o usuário atual baseado no token de autenticação JWT.
+    O 'sub' do token JWT é esperado ser o ID do usuário.
     """
     credentials_exception = HTTPException(
-        status_code=HTTPStatus.UNAUTHORIZED,
+        status_code=status.HTTP_401_UNAUTHORIZED,
         detail='Não foi possível validar as credenciais',
         headers={'WWW-Authenticate': 'Bearer'},
     )
+    if credentials is None:
+        logger.warning('Nenhuma credencial fornecida.')
+        raise credentials_exception
 
     try:
-        # Log para debug - mostrar o token para depuração
-        logger.info(f'Token recebido: {credentials.credentials[:10]}...')
-
+        logger.debug(f'Token recebido: {credentials.credentials[:10]}...')
         payload = decode(
-            credentials.credentials, settings.SECRET_KEY, algorithms=['HS256']
+            credentials.credentials, settings.SECRET_KEY, algorithms=algorithms
         )
-        phone_number = payload.get('sub')
+        user_id_str = payload.get('sub')
 
-        if not phone_number:
-            logger.warning('Token sem número de telefone (sub)')
+        if user_id_str is None:
+            logger.warning('Token sem ID de usuário (sub)')
             raise credentials_exception
 
-        # Log para debug
-        logger.info(f'Tentativa de autenticação para telefone: {phone_number}')
+        try:
+            user_id = int(user_id_str)
+        except ValueError:
+            logger.warning(
+                f'ID de usuário (sub) no token não é um inteiro válido: '
+                f'{user_id_str}'
+            )
+            raise credentials_exception
 
+        logger.debug(f'Tentativa de autenticação para user_id: {user_id}')
+
+    except ExpiredSignatureError:
+        sub = payload.get('sub') if 'payload' in locals() else 'N/A'
+        logger.warning(f'Token expirado para user_id (sub): {sub}')
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Token expirado. Solicite um novo token de acesso.',
+            headers={
+                'WWW-Authenticate': (
+                    'Bearer error="invalid_token", '
+                    'error_description="The access token expired"'
+                )
+            },
+        )
     except DecodeError as e:
         logger.warning(f'Erro ao decodificar token: {str(e)}')
         raise credentials_exception
-
-    except ExpiredSignatureError:
-        # Token expirado, verificar se deve renovar automaticamente
-        try:
-            # Decodificar sem verificar a expiração para obter o número
-            #  do telefone
-            payload = decode(
-                credentials.credentials,
-                settings.SECRET_KEY,
-                algorithms,
-                options={'verify_exp': False},
-            )
-            phone_number = payload.get('sub')
-
-            if not phone_number:
-                logger.warning('Token expirado sem número de telefone (sub)')
-                raise credentials_exception
-
-            logger.warning(f'Token expirado para telefone: {phone_number}')
-
-            # Retorna exceção de token expirado com informação adicional
-            raise HTTPException(
-                status_code=HTTPStatus.UNAUTHORIZED,
-                detail='Token expirado. Solicite um novo token de acesso.',
-                headers={
-                    'WWW-Authenticate': 'Bearer',
-                    'X-Token-Expired': 'true',
-                },
-            )
-
-        except Exception as e:
-            logger.warning(f'Erro ao processar token expirado: {str(e)}')
-            # Se houver qualquer erro ao tentar renovar, retorna a exceção
-            #  padrão
-            raise credentials_exception
-
-    # Consulta usuário - log explícito para debug
-    logger.info(f'Buscando usuário com telefone: {phone_number}')
-
-    # Consulta apenas os campos do usuário, sem relacionamentos
-    stmt = select(
-        Usuario.id,
-        Usuario.telefone,
-        Usuario.nivel_acesso,
-        Usuario.nome,
-        Usuario.created_at,
-        Usuario.last_seen,
-    ).where(Usuario.telefone == phone_number)
-
-    result = await session.execute(stmt)
-    user_data = result.one_or_none()
-
-    if not user_data:
-        logger.warning(f'Usuário não encontrado para telefone: {phone_number}')
-
-        # Verificar se existem usuários no sistema
-        check_stmt = select(Usuario.id, Usuario.telefone).limit(5)
-        result = await session.execute(check_stmt)
-        users = result.all()
-        if users:
-            logger.info(f'Usuários existentes no sistema: {users}')
-
+    except Exception as e:
+        logger.error(f'Erro inesperado durante a decodificação do token: {e}')
         raise credentials_exception
 
-    # Criar objeto Usuario apenas com os dados que precisamos
-    # Isso evita tentar carregar os relacionamentos
-    user = Usuario(
-        telefone=user_data.telefone,
-        nivel_acesso=user_data.nivel_acesso,
-        nome=user_data.nome,
-    )
-    # Atribuir os valores que não são aceitos no construtor
-    user.id = user_data.id
-    user.created_at = user_data.created_at
-    user.last_seen = user_data.last_seen
-
-    logger.info(f'Usuário autenticado: ID={user.id}, Telefone={user.telefone}')
-
-    try:
-        # Atualizar last_seen usando a função utcnow corrigida
-        # Atualizar diretamente no banco, sem tentar carregar o objeto completo
-        stmt = (
-            update(Usuario)
-            .where(Usuario.id == user.id)
-            .values(last_seen=utcnow())  # Usando utcnow() da database
-        )
-        await session.execute(stmt)
-        await session.commit()
-    except Exception as e:
-        logger.warning(f'Erro ao atualizar last_seen: {str(e)}')
-        await session.rollback()
-        # Não bloqueia o acesso se falhar a atualização do last_seen
-
-    # Retorna o objeto do banco de dados diretamente
-    return user
-
-
-async def get_user_by_phone(
-    phone_number: str,
-    session: AsyncSession = Depends(get_async_session),
-):
-    """
-    Endpoint para o Webhook do WhatsApp - autenticação automática pelo número
-    """
-    if not validate_phone_number(phone_number):
-        raise HTTPException(
-            status_code=HTTPStatus.BAD_REQUEST,
-            detail='Número de telefone inválido',
-        )
-
-    # Obtém ou cria usuário automaticamente
-    user = await get_auto_user_by_phone(phone_number, session)
+    logger.debug(f'Buscando usuário com ID: {user_id}')
+    user = await session.get(Usuario, user_id)
 
     if not user:
-        raise HTTPException(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail='Usuário não encontrado e não foi possível criar',
-        )
+        logger.warning(f'Usuário não encontrado para ID: {user_id}')
+        raise credentials_exception
+
+    logger.info(
+        f'Usuário autenticado: ID={user.id}, Nome={user.nome}, '
+        f'Telefone={user.telefone}'
+    )
+
+    # A atualização do last_seen foi movida para get_or_create_user
+    # e para o endpoint de registro explícito.
+    # Manter aqui pode ser útil se o token for usado por um longo período
+    # e quisermos rastrear a atividade via API de forma mais granular,
+    # mesmo que get_or_create_user não seja chamado.
+    # Por ora, comentamos para evitar escritas duplicadas se o fluxo
+    # de registro/login sempre passar por get_or_create_user.
+    # Se houver outros fluxos de autenticação que não passam por lá,
+    # esta lógica pode precisar ser reavaliada.
+
+    # try:
+    #     # stmt = (
+    #     #     update(Usuario)  # sqlalchemy.update não é mais usado aqui
+    #     #     .where(Usuario.id == user.id)
+    #     #     .values(last_seen=utcnow())
+    #     # )
+    #     # await session.execute(stmt)
+    #     # await session.commit()
+    #     pass # Mantendo o bloco try/except para o caso de reativar no futuro
+    # except Exception as e:
+    #     logger.warning(
+    #         f'Erro ao atualizar last_seen para usuário {user.id} em '
+    #         f'get_current_user: {str(e)}'
+    #     )
+    #     await session.rollback()
 
     return user
 
 
-# Dependência para verificar níveis de acesso
 def check_permission(required_level: NivelAcesso):
     """
     Middleware para verificar se o usuário tem o nível de acesso requerido.
-
-    Esta função verifica de maneira robusta o nível de acesso do usuário,
-    tentando várias abordagens para acessar o atributo nivel_acesso.
-    Registra tentativas de acesso não autorizado para fins de auditoria.
-
-    Args:
-        required_level: Nível de acesso mínimo necessário para a operação
-
-    Returns:
-        Uma função de dependência que pode ser usada em rotas FastAPI
     """
 
     async def permission_checker(
         user: Usuario = Depends(get_current_user), request: Request = None
     ):
-        # Tentativa robusta de obter o nível de acesso
         try:
             nivel_acesso = user.nivel_acesso
-        except Exception:
+        except AttributeError:
             try:
                 nivel_acesso = user.__dict__.get('nivel_acesso')
             except Exception:
-                nivel_acesso = getattr(user, 'nivel_acesso', None)
+                logger.error(
+                    'Não foi possível determinar o nível de acesso para o '
+                    f'usuário {user.id}.'
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail='Erro ao verificar permissões do usuário.',
+                )
 
         if nivel_acesso is None:
             logger.warning(
-                f'Nível de acesso não encontrado. Objeto type: {type(user)}'
+                f'Nível de acesso não definido para o usuário {user.id}.'
             )
-            logger.warning(f'Objeto dir: {dir(user)}')
-
-            # Registro mais detalhado para auditoria de segurança
-            log_security_event(
-                SecurityEvent(
-                    event_type='access_denied',
-                    user_id=getattr(user, 'id', None),
-                    user_phone=getattr(user, 'telefone', None),
-                    details='Não foi possível determinar o nível de acesso',
-                    ip_address=get_client_ip(request) if request else None,
-                    endpoint=request.url.path if request else None,
-                )
-            )
-
             raise HTTPException(
-                status_code=HTTPStatus.UNAUTHORIZED,
-                detail='Não foi possível determinar '
-                'o nível de acesso do usuário',
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='Nível de acesso não configurado para este usuário.',
             )
 
-        # Se o nível for insuficiente
         if nivel_acesso.value < required_level.value:
-            detail_message = (
-                f'Acesso insuficiente. Nível necessário: {required_level.name}'
+            logger.warning(
+                f'Acesso negado para usuário {user.id} (nível {nivel_acesso}) '
+                f'à rota {request.url.path if request else "desconhecida"} '
+                f'(requer nível {required_level}).'
             )
-
-            # Registro detalhado da tentativa não autorizada
-            log_security_event(
-                SecurityEvent(
-                    event_type='insufficient_permission',
-                    user_id=user.id,
-                    user_phone=user.telefone,
-                    details=(
-                        f'Tentativa de acesso com nível {nivel_acesso.name}, '
-                        f'necessário: {required_level.name}'
-                    ),
-                    ip_address=get_client_ip(request) if request else None,
-                    endpoint=request.url.path if request else None,
-                )
-            )
-
             raise HTTPException(
-                status_code=HTTPStatus.FORBIDDEN,
-                detail=detail_message,
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail='Você não tem permissão para realizar esta ação.',
             )
-
-        # Registro de auditoria para acesso bem-sucedido de níveis elevados
-        if nivel_acesso.value >= NivelAcesso.intermediario.value:
-            log_security_event(
-                SecurityEvent(
-                    event_type='admin_access',
-                    user_id=user.id,
-                    user_phone=user.telefone,
-                    details=f'Acesso com nível {nivel_acesso.name}',
-                    ip_address=get_client_ip(request) if request else None,
-                    endpoint=request.url.path if request else None,
-                )
-            )
-
         return user
 
     return permission_checker
 
 
-def get_client_ip(request: Request) -> Optional[str]:
-    """
-    Obtém o endereço IP real do cliente, considerando proxies e cabeçalhos
-    de encaminhamento
+def verify_telegram_webhook(
+    x_telegram_bot_api_secret_token: Optional[str] = Header(None),
+) -> bool:
+    """Verifica o token secreto do webhook do Telegram."""
+    if not settings.TELEGRAM_WEBHOOK_SECRET:
+        logger.warning(
+            'TELEGRAM_WEBHOOK_SECRET não está configurado. '
+            'A verificação do webhook está desabilitada.'
+        )
+        return True
 
-    Args:
-        request: O objeto Request do FastAPI
+    if x_telegram_bot_api_secret_token is None:
+        logger.error('Cabeçalho X-Telegram-Bot-Api-Secret-Token ausente.')
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Cabeçalho X-Telegram-Bot-Api-Secret-Token ausente.',
+        )
 
-    Returns:
-        O endereço IP do cliente ou None se não for possível determiná-lo
-    """
-    if not request:
-        return None
-
-    # Verifica cabeçalhos comuns de proxy
-    forwarded_for = request.headers.get('X-Forwarded-For')
-    if forwarded_for:
-        # Pega o primeiro IP da lista (o IP original do cliente)
-        return forwarded_for.split(',')[0].strip()
-
-    # Cabeçalho alternativo
-    real_ip = request.headers.get('X-Real-IP')
-    if real_ip:
-        return real_ip
-
-    # Caso não tenha cabeçalhos de proxy, usa o cliente direto
-    try:
-        return request.client.host
-    except Exception:
-        return None
-
-
-class SecurityEvent(NamedTuple):
-    """Estrutura para eventos de segurança para facilitar o log"""
-
-    event_type: str
-    user_id: Optional[int] = None
-    user_phone: Optional[str] = None
-    details: Optional[str] = None
-    ip_address: Optional[str] = None
-    endpoint: Optional[str] = None
-
-
-def log_security_event(event: SecurityEvent) -> None:
-    """
-    Registra um evento de segurança para auditoria
-
-    Args:
-        event: Objeto SecurityEvent com informações do evento
-    """
-    # Formata a mensagem para o log
-    log_data = {
-        'timestamp': datetime.now(timezone.utc).isoformat(),
-        'event_type': event.event_type,
-        'user_id': event.user_id,
-        'user_phone': event.user_phone,
-        'details': event.details,
-        'ip_address': event.ip_address,
-        'endpoint': event.endpoint,
-    }
-
-    # Registra no logger dedicado a eventos de segurança
-    security_logger = logging.getLogger('security')
-    security_logger.info(json.dumps(log_data))
-
-    # TODO: Em ambiente de produção, considerar salvar esses logs
-    # em uma tabela específica do banco de dados ou enviar para
-    # um sistema externo de monitoramento de segurança.
-
-
-# Dependências específicas por nível
-require_intermediario = check_permission(NivelAcesso.intermediario)
-require_super_usuario = check_permission(NivelAcesso.super_usuario)
-
-
-# Funções de validação segura para Telegram
-def verify_telegram_webhook(secret_token: str) -> bool:
-    """
-    Verifica se a solicitação veio realmente do Telegram
-
-    Args:
-        secret_token: Token secreto do webhook do Telegram
-
-    Returns:
-        bool: True se a origem for válida, False caso contrário
-    """
-    # Verifica se o token secreto está configurado
-    if not settings.TELEGRAM_SECRET_TOKEN:
-        logger.warning('Token secreto do Telegram não configurado')
-        return False
-
-    # Validação de token secreto - usamos comparação com tempo constante
-    # para prevenir timing attacks
-    if not secret_token or not hmac.compare_digest(
-        settings.TELEGRAM_SECRET_TOKEN, secret_token
-    ):
-        logger.warning('Token secreto do Telegram inválido')
-        return False
-
+    if x_telegram_bot_api_secret_token != settings.TELEGRAM_WEBHOOK_SECRET:
+        logger.error('Token secreto do webhook do Telegram inválido.')
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail='Token secreto do webhook do Telegram inválido.',
+        )
+    logger.debug(
+        'Token secreto do webhook do Telegram verificado com sucesso.'
+    )
     return True
 
 
-async def authenticate_with_rate_limit(
-    phone_number: str, ip_address: str, session: AsyncSession
-) -> Tuple[Usuario, str, bool]:
-    """
-    Autentica um usuário com proteção contra ataques de força bruta
-
-    Args:
-        phone_number: Número de telefone do usuário
-        ip_address: Endereço IP do cliente
-        session: Sessão do banco de dados
-
-    Returns:
-        Tupla (usuario, token, é_novo)
-    """
-    # Verifica rate limiting por IP
-    is_limited, wait_seconds = is_rate_limited(ip_address)
-    if is_limited:
-        log_security_event(
-            SecurityEvent(
-                event_type='rate_limited',
-                user_phone=phone_number,
-                details=f'Bloqueado por rate limit. Aguardar {wait_seconds}s',
-                ip_address=ip_address,
-            )
-        )
-        raise HTTPException(
-            status_code=HTTPStatus.TOO_MANY_REQUESTS,
-            detail=(
-            f'Muitas tentativas. Tente novamente em {wait_seconds} segundos'
-            ),
-            headers={'Retry-After': str(wait_seconds)},
-        )
-
-    # Busca ou cria o usuário
-    try:
-        user = await get_auto_user_by_phone(phone_number, session)
-
-        # Verificar se é novo
-        is_new = getattr(user, 'is_new', False)
-
-        # Gera o token de acesso
-        token = create_whatsapp_token(phone_number)
-
-        # Registra o sucesso no rate limiting
-        record_login_attempt(ip_address, True)
-
-        # Registra o evento de login bem-sucedido
-        log_security_event(
-            SecurityEvent(
-                event_type='login',
-                user_id=user.id,
-                user_phone=user.telefone,
-                details=(
-                    'Login bem-sucedido'
-                    + (' (novo usuário)' if is_new else '')
-                ),
-                ip_address=ip_address,
-            )
-        )
-
-        return user, token, is_new
-
-    except Exception as e:
-        # Registra a falha no rate limiting
-        record_login_attempt(ip_address, False)
-
-        # Registra o evento de falha no login
-        log_security_event(
-            SecurityEvent(
-                event_type='login_failed',
-                user_phone=phone_number,
-                details=f'Falha no login: {str(e)}',
-                ip_address=ip_address,
-            )
-        )
-
-        raise HTTPException(
-            status_code=HTTPStatus.UNAUTHORIZED, detail='Falha na autenticação'
-        )
+require_intermediario = check_permission(NivelAcesso.intermediario)
+require_super_usuario = check_permission(NivelAcesso.super_usuario)

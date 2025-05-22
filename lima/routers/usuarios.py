@@ -4,7 +4,10 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from ..models import NivelAcesso, Usuario
-from ..schemas import UsuarioCreate, UsuarioRead
+from ..schemas import (
+    UsuarioCreate,
+    UsuarioPublic,
+)  # Alterado de UsuarioRead para UsuarioPublic
 from ..utils.dependencies import (
     AsyncSessionDep,
     CurrentUserDep,
@@ -36,7 +39,9 @@ async def get_usuario_or_404(session, usuario_id: int) -> Usuario:
 
 
 @router.post(
-    '/', response_model=UsuarioRead, status_code=status.HTTP_201_CREATED
+    '/',
+    response_model=UsuarioPublic,
+    status_code=status.HTTP_201_CREATED,  # Alterado de UsuarioRead para UsuarioPublic
 )
 async def criar_usuario(
     usuario: UsuarioCreate,
@@ -71,10 +76,14 @@ async def criar_usuario(
 
     logger.info(f'Novo usuário: {novo_usuario.id} por {current_user.id}')
 
-    return UsuarioRead.model_validate(novo_usuario)
+    return UsuarioPublic.model_validate(
+        novo_usuario
+    )  # Alterado de UsuarioRead para UsuarioPublic
 
 
-@router.get('/me', response_model=UsuarioRead)
+@router.get(
+    '/me', response_model=UsuarioPublic
+)  # Alterado de UsuarioRead para UsuarioPublic
 async def ler_usuario_atual(
     current_user: CurrentUserDep,
     session: AsyncSessionDep,
@@ -90,7 +99,9 @@ async def ler_usuario_atual(
                 detail='Usuário não autenticado corretamente',
             )
         # Retorna o schema Pydantic diretamente
-        return UsuarioRead.model_validate(current_user)
+        return UsuarioPublic.model_validate(
+            current_user
+        )  # Alterado de UsuarioRead para UsuarioPublic
     except Exception as e:
         logger.warning(f'Erro ao acessar current_user: {str(e)}')
         try:
@@ -103,7 +114,9 @@ async def ler_usuario_atual(
                 result = await session.execute(stmt)
                 usuario = result.scalar_one_or_none()
                 if usuario:
-                    return UsuarioRead.model_validate(usuario)
+                    return UsuarioPublic.model_validate(
+                        usuario
+                    )  # Alterado de UsuarioRead para UsuarioPublic
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=(
@@ -124,7 +137,10 @@ async def ler_usuario_atual(
             )
 
 
-@router.get('/{usuario_id}', response_model=UsuarioRead)
+@router.get(
+    '/{usuario_id}',
+    response_model=UsuarioPublic,  # Alterado de UsuarioRead para UsuarioPublic
+)
 async def obter_usuario(
     session: AsyncSessionDep,
     usuario_id: IdPathDep,
@@ -148,7 +164,9 @@ async def obter_usuario(
                 detail='Usuário não encontrado',
             )
 
-        return UsuarioRead.model_validate(usuario)
+        return UsuarioPublic.model_validate(
+            usuario
+        )  # Alterado de UsuarioRead para UsuarioPublic
 
     except AttributeError as e:
         # Caso haja problema ao acessar os atributos
@@ -159,7 +177,9 @@ async def obter_usuario(
         )
 
 
-@router.put('/{usuario_id}/nome', response_model=UsuarioRead)
+@router.put(
+    '/{usuario_id}/nome', response_model=UsuarioPublic
+)  # Alterado de UsuarioRead para UsuarioPublic
 async def atualizar_nome_usuario(
     usuario_id: IdPathDep,
     nome: NomeQueryDep,
@@ -195,7 +215,9 @@ async def atualizar_nome_usuario(
         await session.commit()
         await session.refresh(usuario)
 
-        return UsuarioRead.model_validate(usuario)
+        return UsuarioPublic.model_validate(
+            usuario
+        )  # Alterado de UsuarioRead para UsuarioPublic
 
     except AttributeError as e:
         # Caso haja problema ao acessar os atributos
@@ -204,3 +226,28 @@ async def atualizar_nome_usuario(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Usuário não autenticado corretamente',
         )
+
+
+@router.get(
+    '/', response_model=UsuarioPublic
+)  # Alterado de UsuarioRead para UsuarioPublic
+async def obter_usuario_por_telefone(
+    telefone: str,
+    session: AsyncSessionDep,
+    # current_user: CurrentUserDep, # Removido para permitir acesso interno do bot
+):
+    """Retorna informações do usuário pelo telefone.
+    Usado pelo bot Telegram.
+    """
+    usuario = await session.scalar(
+        select(Usuario).where(Usuario.telefone == telefone)
+    )
+    if not usuario:
+        logger.info(f'Usuário não encontrado para telefone: {telefone}')
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Usuário não encontrado',
+        )
+    return UsuarioPublic.model_validate(
+        usuario
+    )  # Alterado de UsuarioRead para UsuarioPublic
