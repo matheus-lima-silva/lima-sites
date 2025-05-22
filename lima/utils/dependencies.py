@@ -27,14 +27,42 @@ IntermediarioUserDep = Annotated[Usuario, Depends(require_intermediario)]
 SuperUserDep = Annotated[Usuario, Depends(require_super_usuario)]
 
 # Dependências de validação de parâmetros comuns
-IdPathDep = Annotated[int, Path(..., ge=1, description='ID do registro')]
-SkipQueryDep = Annotated[int, Query(0, ge=0, description='Registros a pular')]
-LimitQueryDep = Annotated[
-    int, Query(100, ge=1, le=100, description='Máximo de registros')
-]
-OrderDescQueryDep = Annotated[
-    bool, Query(True, description='Ordenação decrescente')
-]
+IdPathDep = Annotated[int, Path(ge=1, description='ID do registro')]
+
+
+# Corrigindo a definição dos parâmetros Query
+# Em vez de usar o valor padrão no Query(), definimos após o Annotated
+def skip_query(
+    skip: int = Query(0, ge=0, description='Registros a pular'),
+) -> int:
+    return skip
+
+
+def limit_query(
+    limit: int = Query(100, ge=1, le=100, description='Máximo de registros'),
+) -> int:
+    return limit
+
+
+def order_desc_query(
+    order_desc: bool = Query(True, description='Ordenação decrescente'),
+) -> bool:
+    return order_desc
+
+
+# Adicionando a dependência NomeQueryDep que estava faltando
+def nome_query(
+    nome: str = Query(
+        ..., min_length=2, max_length=100, description='Nome do usuário'
+    ),
+) -> str:
+    return nome
+
+
+SkipQueryDep = Annotated[int, Depends(skip_query)]
+LimitQueryDep = Annotated[int, Depends(limit_query)]
+OrderDescQueryDep = Annotated[bool, Depends(order_desc_query)]
+NomeQueryDep = Annotated[str, Depends(nome_query)]
 
 
 # Função útil para validar parâmetros de ordenação

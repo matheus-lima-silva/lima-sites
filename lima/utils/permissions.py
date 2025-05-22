@@ -43,7 +43,8 @@ def verificar_permissao_basica(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f'Não autorizado a acessar {
-            recurso_nome} de outros usuários',
+                recurso_nome
+            } de outros usuários',
         )
 
 
@@ -107,8 +108,9 @@ def verificar_permissao_recurso_processado(
         if current_user.nivel_acesso != NivelAcesso.super_usuario:
             logger.warning(
                 f'Tentativa de modificar {recurso_nome} processado: '
-                f'Usuário {
-                current_user.id} com nível {current_user.nivel_acesso}'
+                f'Usuário {current_user.id} com nível {
+                    current_user.nivel_acesso
+                }'
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -151,3 +153,37 @@ def validar_acesso_por_nivel(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f'Não autorizado a acessar este {recurso}',
             )
+
+
+def check_user_is_active(usuario: Usuario) -> bool:
+    """
+    Verifica se o usuário está ativo.
+    Considera ativo se não for None e não estiver desativado.
+    """
+    # Ajuste conforme sua lógica de usuário ativo
+    return usuario is not None
+
+
+def check_user_is_admin(usuario: Usuario) -> bool:
+    """
+    Verifica se o usuário é super usuário (admin).
+    """
+    return usuario.nivel_acesso == NivelAcesso.super_usuario
+
+
+def check_user_is_intermediate(usuario: Usuario) -> bool:
+    """
+    Verifica se o usuário é intermediário.
+    """
+    return usuario.nivel_acesso == NivelAcesso.intermediario
+
+
+def escape_markdown_v2(text: str) -> str:
+    """
+    Escapa caracteres especiais para envio de mensagens no Telegram
+    usando MarkdownV2.
+    """
+    escape_chars = r'_ * [ ] ( ) ~ ` > # + - = | { } . !'
+    for char in escape_chars.split():
+        text = text.replace(char, f'\\{char}')
+    return text
