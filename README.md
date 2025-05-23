@@ -1,11 +1,11 @@
-# Projeto Lima - API de Endereços via WhatsApp e Telegram
+# Projeto Lima - API de Endereços e Bot Telegram
 
 ![Status](https://img.shields.io/badge/Status-Em%20Desenvolvimento-yellow)
 ![Versão](https://img.shields.io/badge/Versão-0.1.0-blue)
 
 ## 📋 Descrição
 
-O Projeto Lima é uma API para gestão de endereços com integração ao WhatsApp e Telegram. Ele permite consultas, sugestões e gerenciamento de endereços através de uma interface RESTful e também via interações por mensagens.
+O Projeto Lima é uma API para gestão de endereços com um bot integrado para Telegram. Ele permite consultas, sugestões e gerenciamento de endereços através de uma interface RESTful e também via interações por mensagens no Telegram.
 
 > ⚠️ **Aviso**: Este projeto ainda está em desenvolvimento e não deve ser usado em produção.
 
@@ -17,14 +17,13 @@ O Projeto Lima é uma API para gestão de endereços com integração ao WhatsAp
 - ✅ Histórico de alterações em endereços
 - ✅ Anotações vinculadas a endereços
 - ✅ API RESTful para integração com outros sistemas
-- 🚧 Interface via WhatsApp para consultas e sugestões (em desenvolvimento)
 - ✅ Interface via Telegram com suporte a múltiplos comandos e anotações
 
 ## 🛠️ Tecnologias Utilizadas
 
 - **Backend**: FastAPI, SQLAlchemy, Pydantic, Alembic
 - **Banco de Dados**: SQLite (desenvolvimento), PostgreSQL (produção)
-- **Integrações**: API WhatsApp Cloud (Meta), API Telegram Bot
+- **Integrações**: API Telegram Bot
 - **Ferramentas**: Poetry (gerenciamento de dependências), Ruff (linting)
 - **Testes**: Pytest, Coverage
 
@@ -32,46 +31,36 @@ O Projeto Lima é uma API para gestão de endereços com integração ao WhatsAp
 
 ```
 lima/
-├── app.py                 # Ponto de entrada da aplicação
-├── models.py              # Modelos de dados
-├── schemas.py             # Schemas Pydantic
+├── app.py                 # Ponto de entrada da aplicação FastAPI
+├── models.py              # Modelos de dados SQLAlchemy
+├── schemas.py             # Schemas Pydantic para validação
 ├── settings.py            # Configurações e variáveis de ambiente
 ├── database.py            # Configuração do banco de dados
-├── security.py            # Autenticação e segurança
-├── scheduler.py           # Agendador de tarefas
-├── routers/               # Endpoints da API
-│   ├── auth.py            # Autenticação
+├── security.py            # Autenticação e segurança (JWT)
+├── scheduler.py           # Agendador de tarefas (APScheduler)
+├── routers/               # Endpoints da API (FastAPI routers)
+│   ├── auth.py            # Autenticação de usuários
 │   ├── usuarios.py        # Gerenciamento de usuários
-│   ├── enderecos.py       # CRUD de endereços
-│   ├── sugestoes.py       # Sistema de sugestões
-│   ├── alteracoes.py      # Registro de alterações
-│   ├── buscas.py          # Histórico de buscas
-│   └── anotacoes.py       # Anotações em endereços
-└── services/
-    ├── ai_service.py      # Serviço de IA para processamento
-    ├── whatsapp.py        # Integração com WhatsApp
-    ├── whatsapp_commands.py # Comandos para WhatsApp
-    └── telegram/          # Módulo de integração com Telegram
-        ├── __init__.py    # Exportação da API do módulo
-        ├── core.py        # Funções básicas de comunicação com a API
-        ├── commands.py    # Gerenciamento de comandos
-        ├── formatters.py  # Formatação de mensagens
-        ├── conversation.py # Gerenciamento de conversas
-        ├── registro.py    # Funções para registro de usuários
-        └── handlers/      # Handlers para diferentes tipos de comandos
-            ├── annotation_commands.py  # Comandos de anotação
-            ├── search_commands.py      # Comandos de busca
-            ├── detail_commands.py      # Comandos de detalhes
-            └── basic_commands.py       # Comandos básicos
+│   ├── usuarios_admin.py  # Gerenciamento administrativo de usuários
+│   ├── enderecos/         # Sub-aplicação para CRUD de endereços
+│   │   ├── admin.py       # Endpoints administrativos de endereços
+│   │   └── busca.py       # Endpoints de busca de endereços
+│   ├── sugestoes.py       # Sistema de sugestões de endereços
+│   ├── alteracoes.py      # Registro de alterações em endereços
+│   ├── buscas_router.py   # Histórico de buscas (nome pode variar)
+│   └── anotacoes_router.py# Anotações em endereços (nome pode variar)
+└── bot/                   # Módulo de integração com Telegram
+    ├── main.py            # Ponto de entrada e configuração do bot Telegram
+    ├── handlers.py        # Handlers para comandos e mensagens do Telegram
+    └── formatters.py      # Formatação de mensagens para o Telegram
 ```
 
 ## 🔧 Instalação
 
 ### Pré-requisitos
 
-- Python 3.10+
+- Python 3.12+
 - Poetry (gerenciador de dependências)
-- Conta no Facebook Business (para integração com WhatsApp)
 - Bot no Telegram (para integração com Telegram)
 
 ### Instalação para Desenvolvimento
@@ -85,36 +74,32 @@ cd lima
 poetry install
 
 # Configure as variáveis de ambiente
-cp .env.example .env
-# Edite o arquivo .env com suas configurações
+# Crie um arquivo .env baseado no .env.example (se existir) ou defina as variáveis diretamente
+# Edite o arquivo .env com suas configurações (tokens, URLs de banco, etc.)
 
 # Execute as migrações do banco de dados
 poetry run alembic upgrade head
 
-# Inicie o servidor de desenvolvimento
+# Inicie o servidor de desenvolvimento FastAPI
 poetry run uvicorn lima.app:app --reload
 
-# Para configurar o webhook do Telegram (opcional)
+# Para configurar o webhook do Telegram (opcional, se não usar polling)
 poetry run python configure_telegram_webhook.py
 ```
 
-Para mais detalhes sobre a configuração, consulte a [documentação completa](docs/README.md).
+Para mais detalhes sobre a configuração, consulte a documentação específica de cada componente.
 
 ## 📚 Documentação
 
-- [Guia de Instalação](docs/installation.md)
-- [Configuração do WhatsApp](docs/whatsapp-setup.md)
-- [Configuração do Telegram](docs/telegram-setup.md)
-- [Configuração do Webhook do Telegram](docs/telegram-webhook-guide.md)
-- [Sistema de Anotações via Telegram](docs/telegram-anotacoes.md)
-- [Estrutura do Banco de Dados](docs/database.md)
-- [API Reference](docs/api.md)
-- [Guia de Testes](docs/testing-guide.md)
-- [Guia de Contribuição](docs/contributing.md)
+- [Guia de Instalação](#-instalação)
+- [Configuração do Webhook do Telegram](docs/README.md) <!-- Assumindo que o README.md em docs/ agora cobre isso -->
+- [API Reference](docs/README.md) <!-- Assumindo que o README.md em docs/ agora cobre isso -->
+- [Guia de Testes](docs/README.md) <!-- Assumindo que o README.md em docs/ agora cobre isso -->
+- [Guia de Contribuição](docs/README.md) <!-- Assumindo que o README.md em docs/ agora cobre isso -->
 
 ## 📝 Licença
 
-Este projeto está licenciado sob a licença MIT - veja o arquivo [LICENSE](LICENSE) para mais detalhes.
+Este projeto está licenciado sob a licença MIT - veja o arquivo `LICENSE` (se existir) para mais detalhes.
 
 ## ✒️ Autores
 
