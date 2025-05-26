@@ -23,7 +23,6 @@ from ..keyboards import (
 )
 from ..services.anotacao import listar_anotacoes  # Adicionado
 from ..services.sugestao import criar_sugestao
-from .anotacao import TEXTO  # Estado da conversa de anotação
 
 # Movendo importações para o topo do arquivo
 from .busca import _processar_busca
@@ -55,6 +54,17 @@ async def handle_callback(
     logger.info(f'Callback recebido: {callback_data}')  # Log para depuração
 
     try:
+        # Ignora callbacks que são tratados por ConversationHandlers
+        if (callback_data.startswith('fazer_anotacao_') or
+            callback_data.startswith('finalizar_anotacao_') or
+            callback_data.startswith('cancelar_anotacao_')):
+            # Estes callbacks são tratados pelo ConversationHandler de anotação
+            logger.debug(
+                f'Callback {callback_data} será tratado pelo '
+                'ConversationHandler'
+            )
+            return
+
         if callback_data.startswith('filtro_'):
             await filtro_callback(update, context)
         elif callback_data.startswith('pagina_'):
@@ -65,8 +75,6 @@ async def handle_callback(
             await sugestao_callback(update, context)
         elif callback_data.startswith('confirma_'):
             await confirma_callback(update, context)
-        elif callback_data.startswith('fazer_anotacao_'):  # Novo
-            await fazer_anotacao_callback(update, context)
         elif callback_data.startswith('ler_anotacoes_'):  # Novo
             await ler_anotacoes_callback(update, context)
         else:
@@ -431,39 +439,7 @@ async def confirma_callback(
                 await query.message.reply_text(warn_msg_sugestao)
 
     elif callback_data.endswith('_nao'):
-        await query.message.reply_text('❌ Operação cancelada\\.')
-
-
-# Handlers para os novos botões de anotação
-async def fazer_anotacao_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    """
-    Inicia a conversa para fazer uma anotação para um endereço específico.
-    """
-    query = update.callback_query
-    await query.answer()
-    callback_data = query.data
-    logger.info(f'fazer_anotacao_callback: {callback_data}')
-
-    match = re.match(r'fazer_anotacao_(\d+)', callback_data)
-    if not match:
-        logger.warning(
-            f'Callback de fazer anotação mal formatado: {callback_data}'
-        )
-        await query.message.reply_text(
-            'Erro ao processar o ID do endereço para anotação.'
-        )
-        return -1  # Fim da conversa ou estado de erro
-
-    id_endereco = int(match.group(1))
-    context.user_data['id_endereco_anotacao'] = id_endereco
-
-    await query.message.reply_text(
-        f'Você selecionou fazer uma anotação para o endereço com ID '
-        f'{id_endereco}.\nPor favor, digite o texto da sua anotação:'
-    )
-    return TEXTO
+        await query.message.reply_text('❌ Operação cancelada\\\\.')
 
 
 # Transiciona para o estado de receber o texto da anotação
@@ -477,7 +453,8 @@ def _formatar_mensagem_anotacoes(
     # É uma lista e não está vazia
     if isinstance(anotacoes_data, list) and anotacoes_data:
         lista_anotacoes = anotacoes_data
-        mensagem = f'📖 *Anotações para o Endereço ID {id_endereco}*\n\n'  # Título com duas quebras de linha
+        mensagem = f'📖 *Anotações para o Endereço ID {id_endereco}*\n\n'
+        # Título com duas quebras de linha
 
         for i, anotacao in enumerate(lista_anotacoes):
             texto_original = anotacao.get('texto', 'Texto não disponível')
@@ -492,16 +469,20 @@ def _formatar_mensagem_anotacoes(
                     )
                     data_formatada = dt_obj.strftime('%d/%m/%Y às %H:%M')
                     data_criacao_str = (
-                        f'\n*Data:* {escapar_markdown_v2(data_formatada)}'  # Quebra de linha antes da data
+                        f'\n*Data:* {escapar_markdown_v2(data_formatada)}'
+                        # Quebra de linha antes da data
                     )
                 except ValueError:
                     data_criacao_str = (
-                        f'\n*Data:* {escapar_markdown_v2(str(data_criacao))}'  # Quebra de linha antes da data
+                        f'\n*Data:* {escapar_markdown_v2(str(data_criacao))}'
+                          # Quebra de linha antes da data
                     )
 
-            mensagem += f'{i + 1}\. {texto_escapado}{data_criacao_str}\n'  # Quebra de linha ao final de cada anotação
+            mensagem += f'{i + 1}\\. {texto_escapado}{data_criacao_str}\n'
+            # Quebra de linha ao final de cada anotação
             if i < len(lista_anotacoes) - 1:
-                mensagem += escapar_markdown_v2('----') + '\n\n'  # Duas quebras de linha para o separador
+                mensagem += escapar_markdown_v2('----') + '\n\n'
+            # Duas quebras de linha para o separador
 
     # Lista vazia
     elif isinstance(anotacoes_data, list) and not anotacoes_data:
@@ -520,7 +501,8 @@ def _formatar_mensagem_anotacoes(
         else:
             mensagem = (
                 f'ℹ️ Resposta inesperada ao buscar anotações para o '
-                f'endereço ID {id_endereco}\\.'  # Mantido \\. para escapar o ponto literal
+                f'endereço ID {id_endereco}\\.'
+                # Mantido \\. para escapar o ponto literal
             )
     # None ou outro tipo inesperado
     else:
@@ -543,7 +525,8 @@ async def ler_anotacoes_callback(
     callback_data = query.data
     logger.info(f'ler_anotacoes_callback: {callback_data}')
 
-    match = re.match(r'ler_anotacoes_(\d+)', callback_data)  # Corrigido: Removido \\ extra
+    match = re.match(r'ler_anotacoes_(\d+)', callback_data)
+    # Corrigido: Removido \\ extra
     if not match:
         logger.warning(
             f'Callback de ler anotações mal formatado: {callback_data}'
@@ -579,10 +562,8 @@ async def ler_anotacoes_callback(
         )
         # Corrigido: f-string de múltiplas linhas e escape de pontos finais.
         mensagem_erro = (
-            f'😞 Ocorreu um erro ao buscar as anotações para o endereço ID {
-                id_endereco
-            }\\. '
-            'Por favor, tente novamente mais tarde\\.'
+            f'😞 Ocorreu um erro ao buscar as anotações para o endereço ID '
+            f'{id_endereco}\\. Por favor, tente novamente mais tarde\\.'
         )
         await query.message.reply_text(
             mensagem_erro, parse_mode=ParseMode.MARKDOWN_V2
