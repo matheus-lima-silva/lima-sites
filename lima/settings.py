@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # Configurações de Segurança
     SECRET_KEY: str
-    DEBUG: bool = False
+    DEBUG: bool = True  # Alterado para True para ativar o modo de depuração
     ACCESS_TOKEN_EXPIRE_DAYS: int = 30
 
     # Configurações do Administrador
