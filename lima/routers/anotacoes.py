@@ -67,9 +67,8 @@ async def criar_anotacao(
     ```json
     {
       "id_endereco": 29,
-      "id_usuario": 1,
-      "texto": "Este endereço foi
-        verificado pessoalmente e confirmado como correto."
+      "texto": "Este endereço foi verificado pessoalmente
+        e confirmado como correto."
     }
     ```
 
