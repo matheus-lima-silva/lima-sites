@@ -4,6 +4,7 @@ Handlers para callbacks de botões inline.
 
 import logging
 import re
+from datetime import datetime  # Adicionado
 
 from telegram import Update
 from telegram.constants import ParseMode
@@ -20,12 +21,22 @@ from ..keyboards import (
     criar_teclado_sugestoes,
     criar_teclado_tipos_endereco,
 )
+from ..services.anotacao import listar_anotacoes  # Adicionado
 from ..services.sugestao import criar_sugestao
+from .anotacao import TEXTO  # Estado da conversa de anotação
 
 # Movendo importações para o topo do arquivo
 from .busca import _processar_busca
 
 logger = logging.getLogger(__name__)
+
+
+# Adicionar helper para escapar MarkdownV2
+def escapar_markdown_v2(texto: str) -> str:
+    """Escapa caracteres especiais para MarkdownV2 do Telegram."""
+    # Caracteres a serem escapados: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', texto)
 
 
 async def handle_callback(
@@ -41,6 +52,7 @@ async def handle_callback(
     )  # Responde ao callback para remover o "carregando" do botão
 
     callback_data = query.data
+    logger.info(f'Callback recebido: {callback_data}')  # Log para depuração
 
     try:
         if callback_data.startswith('filtro_'):
@@ -53,6 +65,10 @@ async def handle_callback(
             await sugestao_callback(update, context)
         elif callback_data.startswith('confirma_'):
             await confirma_callback(update, context)
+        elif callback_data.startswith('fazer_anotacao_'):  # Novo
+            await fazer_anotacao_callback(update, context)
+        elif callback_data.startswith('ler_anotacoes_'):  # Novo
+            await ler_anotacoes_callback(update, context)
         else:
             logger.warning(f'Callback não reconhecido: {callback_data}')
     except Exception as e:
@@ -76,7 +92,8 @@ async def filtro_callback(
     # Adicionado para verificar os resultados da busca atual
     resultados_busca = context.user_data.get('resultados_busca', [])
 
-    # Callbacks que não dependem de resultados existentes ou que são para navegação
+    # Callbacks que não dependem de resultados
+    #  existentes ou que são para navegação
     if callback_data == 'mostrar_filtros':
         # Mostra o teclado com os filtros disponíveis
         await query.message.reply_text(
@@ -89,16 +106,17 @@ async def filtro_callback(
         await pagina_callback(update, context)
         return  # Sai após tratar este callback
 
-    # Para os demais filtros, verificar se há mais de um resultado
+    # Para os demais filtros, verificar se há resultados
     # Esta verificação agora acontece ANTES de processar os callbacks de filtro
-    if len(resultados_busca) <= 1:
+    if not resultados_busca:  # Modificado para verificar se a lista está vazia
         # Mensagem informando que a filtragem não está disponível/aplicável
         await query.message.reply_text(
-            'ℹ️ A filtragem só está disponível quando há mais de um resultado na busca atual\\.'
+            'ℹ️ A filtragem não está disponível pois não há resultados na'
+            ' busca atual.'
         )
-        return  # Sai se não houver resultados suficientes para filtrar
+        return  # Sai se não houver resultados para filtrar
 
-    # Lógica de filtro existente (só será alcançada se len(resultados_busca) > 1)
+    # Lógica de filtro existente
     if callback_data == 'filtro_cidade':
         await query.message.reply_text(
             'Por favor, digite o nome da cidade que deseja filtrar:'
@@ -133,8 +151,9 @@ async def filtro_callback(
 
     # Não é necessário um 'else' aqui, pois callbacks não reconhecidos
     # são logados pelo handler geral 'handle_callback'.
-    # Se callback_data não corresponder a nenhum filtro após a verificação de len > 1,
-    # nada mais acontece nesta função, o que é o comportamento esperado.
+    # Se callback_data não corresponder a nenhum filtro após a
+    # verificação de resultados, nada mais acontece nesta função,
+    # o que é o comportamento esperado.
 
 
 def _preparar_mensagem_pagina(
@@ -168,7 +187,9 @@ def _preparar_mensagem_pagina(
         msg_ini = inicio + 1
         msg_fim = fim
         msg_total = total_resultados
-        mensagem_cabecalho = f'🏢 *Exibindo resultados {msg_ini}\\-{msg_fim} de {msg_total}*\n\n'
+        mensagem_cabecalho = (
+            f'🏢 *Exibindo resultados {msg_ini}-{msg_fim} de {msg_total}*\n\n'
+        )
 
     mensagem_lista = formatar_lista_resultados(
         itens_pagina,
@@ -269,22 +290,41 @@ async def tipo_callback(
 
     # Adiciona a verificação do número de resultados
     resultados_busca = context.user_data.get('resultados_busca', [])
-    if len(resultados_busca) <= 1:
+    if not resultados_busca:  # Modificado para verificar se a lista está vazia
         await query.message.reply_text(
             (
-                'ℹ️ A filtragem por tipo só está disponível quando há '
-                'mais de um resultado\\.'
+                'ℹ️ A filtragem por tipo não está disponível pois não há '
+                'resultados na busca atual\\.'
             ),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
+    # Removida a verificação de len(resultados_busca) <= 1 pois o teclado
+    # de filtros (que leva a este callback) já não é mostrado para
+    #  <=1 resultado
+    # na função criar_teclado_resultados_combinado.
+    # A verificação acima (if not resultados_busca) é suficiente.
+
     callback_data = query.data
 
     match = re.match(r'tipo_(\w+)', callback_data)
     if match:
-        tipo = match.group(1)
-        await _processar_busca(update, context, tipo=tipo)
+        tipo_param = match.group(1)
+        # Renomeado para evitar conflito
+        # A função _processar_busca espera um dicionário para params_busca
+        # e o parâmetro de tipo é 'tipo_logradouro',
+        #  'tipo_edificacao', etc.
+        # Aqui, precisamos garantir que estamos passando o filtro correto.
+        # Assumindo que 'tipo' no callback_data se
+        #  refere a um filtro genérico
+        # que _processar_busca pode entender ou que precisa ser mapeado.
+        # Para este exemplo, vamos assumir que _processar_busca pode lidar
+        #  com um param 'tipo'.
+        # Se for um tipo específico (ex: tipo_logradouro), ajuste aqui.
+        await _processar_busca(
+            update, context, params_busca={'tipo': tipo_param}
+        )
 
 
 async def sugestao_callback(
@@ -392,3 +432,158 @@ async def confirma_callback(
 
     elif callback_data.endswith('_nao'):
         await query.message.reply_text('❌ Operação cancelada\\.')
+
+
+# Handlers para os novos botões de anotação
+async def fazer_anotacao_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """
+    Inicia a conversa para fazer uma anotação para um endereço específico.
+    """
+    query = update.callback_query
+    await query.answer()
+    callback_data = query.data
+    logger.info(f'fazer_anotacao_callback: {callback_data}')
+
+    match = re.match(r'fazer_anotacao_(\d+)', callback_data)
+    if not match:
+        logger.warning(
+            f'Callback de fazer anotação mal formatado: {callback_data}'
+        )
+        await query.message.reply_text(
+            'Erro ao processar o ID do endereço para anotação.'
+        )
+        return -1  # Fim da conversa ou estado de erro
+
+    id_endereco = int(match.group(1))
+    context.user_data['id_endereco_anotacao'] = id_endereco
+
+    await query.message.reply_text(
+        f'Você selecionou fazer uma anotação para o endereço com ID '
+        f'{id_endereco}.\nPor favor, digite o texto da sua anotação:'
+    )
+    return TEXTO
+
+
+# Transiciona para o estado de receber o texto da anotação
+
+
+def _formatar_mensagem_anotacoes(
+    anotacoes_data: list | dict, id_endereco: int
+) -> str:
+    """Formata a mensagem a ser enviada ao usuário com as anotações."""
+    mensagem: str
+    # É uma lista e não está vazia
+    if isinstance(anotacoes_data, list) and anotacoes_data:
+        lista_anotacoes = anotacoes_data
+        mensagem = f'📖 *Anotações para o Endereço ID {id_endereco}*\n\n'  # Título com duas quebras de linha
+
+        for i, anotacao in enumerate(lista_anotacoes):
+            texto_original = anotacao.get('texto', 'Texto não disponível')
+            texto_escapado = escapar_markdown_v2(texto_original)
+
+            data_criacao_str = ''
+            data_criacao = anotacao.get('data_criacao', '')
+            if data_criacao:
+                try:
+                    dt_obj = datetime.fromisoformat(
+                        str(data_criacao).replace('Z', '+00:00')
+                    )
+                    data_formatada = dt_obj.strftime('%d/%m/%Y às %H:%M')
+                    data_criacao_str = (
+                        f'\n*Data:* {escapar_markdown_v2(data_formatada)}'  # Quebra de linha antes da data
+                    )
+                except ValueError:
+                    data_criacao_str = (
+                        f'\n*Data:* {escapar_markdown_v2(str(data_criacao))}'  # Quebra de linha antes da data
+                    )
+
+            mensagem += f'{i + 1}\. {texto_escapado}{data_criacao_str}\n'  # Quebra de linha ao final de cada anotação
+            if i < len(lista_anotacoes) - 1:
+                mensagem += escapar_markdown_v2('----') + '\n\n'  # Duas quebras de linha para o separador
+
+    # Lista vazia
+    elif isinstance(anotacoes_data, list) and not anotacoes_data:
+        mensagem = (
+            f'ℹ️ Nenhuma anotação encontrada para o endereço ID '
+            f'{id_endereco}\\.'  # Mantido \\. para escapar o ponto literal
+        )
+    # Resposta da API é um dicionário (provável erro)
+    elif isinstance(anotacoes_data, dict):
+        detail_message = anotacoes_data.get('detail')
+        specific_message = anotacoes_data.get('message')
+        if detail_message:
+            mensagem = f'ℹ️ {escapar_markdown_v2(str(detail_message))}'
+        elif specific_message:
+            mensagem = f'ℹ️ {escapar_markdown_v2(str(specific_message))}'
+        else:
+            mensagem = (
+                f'ℹ️ Resposta inesperada ao buscar anotações para o '
+                f'endereço ID {id_endereco}\\.'  # Mantido \\. para escapar o ponto literal
+            )
+    # None ou outro tipo inesperado
+    else:
+        mensagem = (
+            f'ℹ️ Nenhuma anotação encontrada para o endereço ID '
+            f'{id_endereco} ou ocorreu um erro ao buscar\\.'
+                # Mantido \\. para escapar o ponto literal
+        )
+    return mensagem
+
+
+async def ler_anotacoes_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Busca e exibe as anotações de um endereço específico.
+    """
+    query = update.callback_query
+    await query.answer()
+    callback_data = query.data
+    logger.info(f'ler_anotacoes_callback: {callback_data}')
+
+    match = re.match(r'ler_anotacoes_(\d+)', callback_data)  # Corrigido: Removido \\ extra
+    if not match:
+        logger.warning(
+            f'Callback de ler anotações mal formatado: {callback_data}'
+        )
+        # Corrigido: Adicionado escape para o ponto final.
+        await query.message.reply_text(
+            'Erro ao processar o ID do endereço para ler anotações\\\\.'
+        )
+        return
+
+    id_endereco = int(match.group(1))
+    user_id = update.effective_user.id
+
+    # Corrigido: Adicionado escape para os pontos da reticência.
+    await query.message.reply_text(
+        f'Buscando anotações para o endereço ID {id_endereco}\\.\\.\\.',
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+    try:
+        anotacoes_data = await listar_anotacoes(
+            id_endereco=id_endereco, user_id=user_id
+        )
+        mensagem = _formatar_mensagem_anotacoes(anotacoes_data, id_endereco)
+
+        await query.message.reply_text(
+            mensagem, parse_mode=ParseMode.MARKDOWN_V2
+        )
+
+    except Exception as e:
+        logger.error(
+            f'Erro ao listar anotações para o endereço ID {id_endereco}: {e}'
+        )
+        # Corrigido: f-string de múltiplas linhas e escape de pontos finais.
+        mensagem_erro = (
+            f'😞 Ocorreu um erro ao buscar as anotações para o endereço ID {
+                id_endereco
+            }\\. '
+            'Por favor, tente novamente mais tarde\\.'
+        )
+        await query.message.reply_text(
+            mensagem_erro, parse_mode=ParseMode.MARKDOWN_V2
+        )
