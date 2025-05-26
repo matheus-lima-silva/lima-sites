@@ -3,7 +3,7 @@ Serviço para gerenciamento de anotações.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..api_client import (  # Corrigido import para múltiplas linhas
     fazer_requisicao_delete,
@@ -19,7 +19,7 @@ async def criar_anotacao(
     id_endereco: int,  # Removido id_usuario daqui
     texto: str,
     user_id: Optional[int] = None,  # Mantido user_id para autenticação
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Optional[str]]:
     """
     Cria uma nova anotação para um endereço.
 
@@ -29,7 +29,9 @@ async def criar_anotacao(
         user_id: ID do usuário do Telegram (opcional) para autenticação.
 
     Returns:
-        Anotação criada.
+        Tupla (anotacao_criada, mensagem_erro). Se sucesso, mensagem_erro
+        é None. Se erro, anotacao_criada é None e mensagem_erro contém a
+        descrição do erro.
     """
     data = {
         # 'id_usuario': id_usuario, # Removido id_usuario do payload
@@ -37,7 +39,14 @@ async def criar_anotacao(
         'texto': texto,
     }
 
-    return await fazer_requisicao_post('anotacoes/', data, user_id=user_id)
+    try:
+        result = await fazer_requisicao_post(
+            'anotacoes/', data, user_id=user_id
+        )
+        return result, None  # Sucesso: retorna resultado e erro None
+    except Exception as e:
+        logger.error(f"Erro ao criar anotação: {str(e)}")
+        return None, str(e)  # Erro: retorna None e mensagem de erro
 
 
 async def listar_anotacoes(

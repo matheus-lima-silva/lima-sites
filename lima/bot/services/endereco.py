@@ -64,7 +64,8 @@ async def buscar_endereco(
 
     if id_endereco:
         # Se busca por ID, usa endpoint específico
-        endereco = await fazer_requisicao_get(f'enderecos/{id_endereco}',
+        endereco = await fazer_requisicao_get(f'enderecos/admin/{id_endereco}',
+        # Modificado aqui
          user_id=user_id)
         return [endereco] if endereco else []
     else:
