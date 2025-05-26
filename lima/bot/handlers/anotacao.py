@@ -16,7 +16,11 @@ from telegram.ext import (
 )
 
 from ..formatters import escape_markdown, formatar_endereco
-from ..keyboards import criar_teclado_confirma_cancelar
+from ..keyboards import (
+    criar_teclado_confirma_cancelar,
+    teclado_endereco_nao_encontrado_criar,  # Adicionado
+    teclado_simples_cancelar_anotacao,  # Adicionado
+)
 from ..services.anotacao import criar_anotacao, listar_anotacoes
 from ..services.endereco import (  # Adicionado FiltrosEndereco
     FiltrosEndereco,
@@ -46,57 +50,52 @@ async def anotar_command(
         return ConversationHandler.END
     user_id_telegram = update.effective_user.id
     context.user_data['user_id_telegram'] = user_id_telegram
-    # Salva para uso posterior na conversa
 
-    # Se o ID já foi informado no comando
-    if context.args and context.args[0].isdigit():
+    if context.args and len(context.args) > 0 and context.args[0].isdigit():
         id_endereco = int(context.args[0])
         context.user_data['id_endereco_anotacao'] = id_endereco
 
-        # Busca o endereço para confirmar
         try:
-            # Atualizado para usar FiltrosEndereco
             filtros = FiltrosEndereco(limite=1)
-            # Apenas para buscar por ID, limite não é estritamente necessário
-            #  aqui mas mantido para consistência
-            endereco = await buscar_endereco(
-                filtros=filtros, id_endereco=id_endereco,
-                  user_id=user_id_telegram
+            enderecos = await buscar_endereco(
+                filtros=filtros,
+                id_endereco=id_endereco,
+                user_id=user_id_telegram
             )
 
-            if not endereco or len(endereco) == 0:
+            if not enderecos or len(enderecos) == 0:
                 await update.message.reply_text(
-                    '⚠️ Endereço não encontrado. Por favor,'
-                    ' verifique o ID e tente novamente:'
+                    (
+                        '⚠️ Endereço não encontrado. Verifique o ID ou tente'
+                        ' outro.'
+                    ),
+                    reply_markup=teclado_endereco_nao_encontrado_criar(),
                 )
                 return ID_ENDERECO
 
-            # Mostra os dados do endereço
-            endereco = endereco[0]
-
+            endereco = enderecos[0]
             await update.message.reply_text(
                 f'📝 *Adicionar Anotação*\n\n'
                 f'Endereço selecionado:\n{formatar_endereco(endereco)}\n\n'
                 f'Por favor, digite o texto da sua anotação:',
                 parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=teclado_simples_cancelar_anotacao(),
             )
-
             return TEXTO
         except Exception as e:
             logger.error(f'Erro ao buscar endereço para anotação: {str(e)}')
             await update.message.reply_text(
-                '😞 Ocorreu um erro ao buscar os dados do endereço. Por favor,'
-                ' tente novamente mais tarde.'
+                '😞 Ocorreu um erro ao buscar os dados do endereço. '
+                'Por favor, tente novamente mais tarde.'
             )
             return ConversationHandler.END
 
-    # Se não, solicita o ID
     await update.message.reply_text(
         '📝 *Adicionar Anotação*\n\n'
-        'Por favor, informe o ID do endereço que deseja anotar:',
+        'Por favor, informe o ID ou código do endereço que deseja anotar:',
         parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=teclado_simples_cancelar_anotacao(),
     )
-
     return ID_ENDERECO
 
 
@@ -104,9 +103,16 @@ async def receber_id_endereco(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     """
-    Recebe o ID do endereço para adicionar uma anotação.
+    Recebe o ID ou código do endereço para adicionar uma anotação.
     """
-    texto = update.message.text.strip()
+    if not update.message or not update.message.text:
+        await update.message.reply_text(
+            'Por favor, envie um ID ou código de endereço válido.',
+            reply_markup=teclado_simples_cancelar_anotacao(),
+        )
+        return ID_ENDERECO
+
+    texto_id_ou_codigo = update.message.text.strip()
 
     if not update.effective_user:
         logger.error(
@@ -116,52 +122,53 @@ async def receber_id_endereco(
             '😞 Ocorreu um erro ao processar sua identidade. '
             'Por favor, tente novamente mais tarde.'
         )
-        return ID_ENDERECO
-    # Ou ConversationHandler.END dependendo do fluxo desejado
+        return ConversationHandler.END
+
     user_id_telegram = update.effective_user.id
     context.user_data['user_id_telegram'] = user_id_telegram
-    # Garante que está salvo
 
-    if not texto.isdigit():
-        await update.message.reply_text(
-            '⚠️ Por favor, digite apenas o número do ID do endereço:'
-        )
-        return ID_ENDERECO
-
-    id_endereco = int(texto)
-    context.user_data['id_endereco_anotacao'] = id_endereco
-
-    # Busca o endereço para confirmar
     try:
-        # Atualizado para usar FiltrosEndereco
         filtros = FiltrosEndereco(limite=1)
-        endereco = await buscar_endereco(
-            filtros=filtros, id_endereco=id_endereco, user_id=user_id_telegram
-        )
+        # Tenta buscar por ID numérico ou por código_endereco
+        if texto_id_ou_codigo.isdigit():
+            enderecos = await buscar_endereco(
+                filtros=filtros,
+                id_endereco=int(texto_id_ou_codigo),
+                user_id=user_id_telegram,
+            )
+        else:
+            enderecos = await buscar_endereco(
+                filtros=filtros,
+                codigo_endereco=texto_id_ou_codigo,
+                user_id=user_id_telegram,
+            )
 
-        if not endereco or len(endereco) == 0:
+        if not enderecos or len(enderecos) == 0:
             await update.message.reply_text(
-                '⚠️ Endereço não encontrado. Por favor,'
-                ' verifique o ID e tente novamente:'
+                (
+                    '⚠️ Endereço não encontrado. Verifique o ID/código ou'
+                    ' tente outro.'
+                ),
+                reply_markup=teclado_endereco_nao_encontrado_criar(),
             )
             return ID_ENDERECO
 
-        # Mostra os dados do endereço
-        endereco = endereco[0]
+        endereco = enderecos[0]
+        context.user_data['id_endereco_anotacao'] = endereco.id
 
         await update.message.reply_text(
             f'📝 *Adicionar Anotação*\n\n'
             f'Endereço selecionado:\n{formatar_endereco(endereco)}\n\n'
             f'Por favor, digite o texto da sua anotação:',
             parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=teclado_simples_cancelar_anotacao(),
         )
-
         return TEXTO
     except Exception as e:
         logger.error(f'Erro ao buscar endereço para anotação: {str(e)}')
         await update.message.reply_text(
-            '😞 Ocorreu um erro ao buscar os dados do endereço.'
-            ' Por favor, tente novamente mais tarde.'
+            '😞 Ocorreu um erro ao buscar os dados do endereço. '
+            'Por favor, tente novamente mais tarde.'
         )
         return ConversationHandler.END
 
@@ -172,15 +179,26 @@ async def receber_texto_anotacao(
     """
     Recebe o texto da anotação.
     """
-    # Armazena o texto
-    context.user_data['texto_anotacao'] = update.message.text
+    if not update.message or not update.message.text:
+        await update.message.reply_text(
+            'Por favor, envie um texto para a anotação.',
+            reply_markup=teclado_simples_cancelar_anotacao(),
+        )
+        return TEXTO  # Permanece no mesmo estado para nova tentativa
 
-    # Prepara mensagem de confirmação
+    context.user_data['texto_anotacao'] = update.message.text
+    id_endereco = context.user_data.get("id_endereco_anotacao")
+
+    if id_endereco is None:
+        await update.message.reply_text(
+            '❌ ID do endereço não encontrado na conversa. '
+            'Por favor, comece novamente com /anotar.'
+        )
+        return ConversationHandler.END
+
     mensagem = (
         f'📋 *Confirmação de Anotação*\n\n'
-        f'ID do Endereço: *{
-            escape_markdown(str(context.user_data["id_endereco_anotacao"]))
-        }*\n\n'
+        f'ID do Endereço: *{escape_markdown(str(id_endereco))}*\n\n'
         f'Texto da Anotação:\n{
             escape_markdown(context.user_data["texto_anotacao"])
         }\n\n'
@@ -190,9 +208,12 @@ async def receber_texto_anotacao(
     await update.message.reply_text(
         mensagem,
         parse_mode=ParseMode.MARKDOWN_V2,
-        reply_markup=criar_teclado_confirma_cancelar('confirma_anotacao'),
+        reply_markup=criar_teclado_confirma_cancelar(
+            callback_prefix='confirma_anotacao',
+            texto_confirmar="✅ Confirmar",
+            texto_cancelar="❌ Cancelar",
+        ),
     )
-
     return CONFIRMAR
 
 
@@ -257,17 +278,25 @@ async def cancelar_anotacao(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     """
-    Cancela o processo de anotação.
+    Cancela o processo de anotação via comando /cancelar ou callback.
     """
-    user = update.effective_user
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.message.reply_text('❌ Processo de anotação cancelado.')
+    elif update.message:  # Se foi um comando /cancelar
+        await update.message.reply_text('❌ Processo de anotação cancelado.')
+    else:
+        logger.warning("cancelar_anotacao chamado sem query ou message")
+        chat_id = context.user_data.get('chat_id') or \
+                  (update.effective_chat and update.effective_chat.id)
+        if chat_id:
+            await context.bot.send_message(
+                chat_id=chat_id, text='❌ Processo de anotação cancelado.'
+            )
 
-    # Limpa os dados da anotação
-    for key in ['id_endereco_anotacao', 'texto_anotacao']:
+    for key in ['id_endereco_anotacao', 'texto_anotacao', 'user_id_telegram']:
         context.user_data.pop(key, None)
-
-    await update.message.reply_text(
-        f'❌ Anotação cancelada. Até mais, {user.first_name}!'
-    )
 
     return ConversationHandler.END
 
@@ -351,26 +380,28 @@ def get_anotacao_conversation() -> ConversationHandler:
     """
     Retorna o conversation handler configurado para anotações.
     """
-    # Imports movidos para o topo do arquivo
-    # from telegram.ext import (
-    #     CallbackQueryHandler,
-    #     CommandHandler,
-    #     MessageHandler,
-    #     filters,
-    # )
-
     return ConversationHandler(
         entry_points=[CommandHandler('anotar', anotar_command)],
         states={
             ID_ENDERECO: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, receber_id_endereco
-                )
+                ),
+                CallbackQueryHandler(
+                    anotar_command, pattern='^tentar_outro_codigo_anotacao$'
+                ),  # Para o botão "Tentar outro código"
+                CallbackQueryHandler(
+                    cancelar_anotacao,
+                    pattern='^cancelar_nova_anotacao_direto$'
+                ),  # Para o botão "Cancelar" no teclado de não encontrado
             ],
             TEXTO: [
                 MessageHandler(
                     filters.TEXT & ~filters.COMMAND, receber_texto_anotacao
-                )
+                ),
+                CallbackQueryHandler(
+                    cancelar_anotacao, pattern='^cancelar_processo_anotacao$'
+                ),  # Para o botão "Cancelar" simples
             ],
             CONFIRMAR: [
                 CallbackQueryHandler(
@@ -381,7 +412,11 @@ def get_anotacao_conversation() -> ConversationHandler:
                 ),
             ],
         },
-        fallbacks=[CommandHandler('cancelar', cancelar_anotacao)],
-        # Adicionado para suprimir o aviso e melhor semântica
-        per_message=True,
+        fallbacks=[
+            CommandHandler('cancelar', cancelar_anotacao),
+            CallbackQueryHandler(
+                cancelar_anotacao, pattern='^cancelar_.*$'
+            ),  # Genérico para outros cancelamentos
+        ],
+        per_message=False,  # Alterado de True para False
     )
