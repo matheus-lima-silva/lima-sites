@@ -316,5 +316,5 @@ def get_sugestao_conversation() -> ConversationHandler:
             ],
         },
         fallbacks=[CommandHandler('cancelar', cancelar_sugestao)],
-        per_message=True,
+        per_message=False,  # Alterado de True para False
     )
