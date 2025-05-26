@@ -44,11 +44,16 @@ async def _create_new_user_instance(
     telegram_user_id: int,
     name: Optional[str],
     expected_phone: str,
-    current_time: datetime, # Mantido para possível uso futuro, mas não passado ao construtor diretamente
+    current_time: datetime,
+    # Mantido para possível uso futuro,
+    # mas não passado ao construtor diretamente
     session: AsyncSession,
 ) -> Usuario:
     """Cria uma nova instância de usuário, mas não faz commit."""
-    logger.info(f'Usuário com Telegram ID {telegram_user_id} não encontrado. Criando.')
+    logger.info(
+        f'Usuário com Telegram ID {telegram_user_id} não encontrado. '
+        'Criando.'
+    )
     user = Usuario(
         telegram_user_id=telegram_user_id,
         telefone=expected_phone,
@@ -122,10 +127,17 @@ async def _commit_user_changes_and_log(
         op_type = 'criação' if is_new_user else 'atualização'
         fields_log = ', '.join(updated_fields) or 'N/A'
         # Garante que user.id seja acessado apenas se user não for None
-        user_pk_id_for_log = user.id if user and hasattr(user, 'id') and user.id is not None else telegram_user_id
-        log_line_1 = f'Erro no commit para usuário (telegram_id={telegram_user_id}, pk_id_tentativo={user_pk_id_for_log}) '
+        user_pk_id_for_log = (
+            user.id if user and hasattr(user, 'id') and user.id is not None
+            else telegram_user_id
+        )
+        log_line_1 = (
+            f'Erro no commit para usuário (telegram_id={telegram_user_id}, '
+            f'pk_id_tentativo={user_pk_id_for_log}) '
+        )
         log_line_2 = f'(op: {op_type}, campos: {fields_log}): {e}.'
-        logger.warning(log_line_1 + log_line_2, exc_info=True)  # Adicionado exc_info=True
+        # Adicionado exc_info=True
+        logger.warning(log_line_1 + log_line_2, exc_info=True)
 
 
 async def get_or_create_user(
@@ -158,14 +170,18 @@ async def get_or_create_user(
             is_new_user = True
         except Exception as e:
             await session.rollback()
-            log_err_create_1 = f'Erro ao instanciar/adicionar usuário ID {
-                telegram_user_id
-            }. Exceção: {e}. '
+            log_err_create_1 = (
+                f'Erro ao instanciar/adicionar usuário ID '
+                f'{telegram_user_id}. Exceção: {e}. '
+            )
             # Modificado para incluir exc_info=True para traceback completo
-            logger.error(log_err_create_1, exc_info=True) # Log da falha inicial na criação
+            logger.error(log_err_create_1, exc_info=True)
 
             # Tentando buscar novamente.
-            logger.info(f'Tentando buscar usuário ID {telegram_user_id} novamente após falha na criação.')
+            logger.info(
+                f'Tentando buscar usuário ID {telegram_user_id} novamente '
+                'após falha na criação.'
+            )
             # Busca novamente pelo campo correto
             result = await session.execute(
                 select(Usuario).where(
@@ -180,7 +196,9 @@ async def get_or_create_user(
                 logger.error(log_crit_create)
                 # Adicionando log extra da exceção 'e' original com traceback
                 logger.error(
-                    f"Exceção original 'e' que levou à falha crítica na criação do usuário {telegram_user_id}: {type(e).__name__}: {str(e)}",
+                    f"Exceção original 'e' que levou à falha crítica na "
+                    f"criação do usuário {telegram_user_id}: "
+                    f"{type(e).__name__}: {str(e)}",
                     exc_info=True
                 )
                 raise HTTPException(
