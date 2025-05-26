@@ -201,7 +201,7 @@ def criar_teclado_resultados_combinado(
     pagina_atual: int,
     total_resultados: int,
     prefixo_pagina: str = 'pagina',
-    mostrar_filtros_botao: bool = True,  # Novo parâmetro
+    mostrar_filtros_botao: bool = True,
 ) -> InlineKeyboardMarkup:
     """
     Cria um teclado combinado com paginação e outros botões (ex: filtros).
@@ -224,8 +224,9 @@ def criar_teclado_resultados_combinado(
     if teclado_paginacao:
         keyboard_rows.extend(teclado_paginacao.inline_keyboard)
 
-    # 2. Botão de Filtros (agora condicional)
-    if mostrar_filtros_botao and total_resultados > 1:  # Condição adicionada
+    # 2. Botão de Filtros
+    # Alterado para mostrar filtros apenas se houver MAIS DE UM resultado.
+    if mostrar_filtros_botao and total_resultados > 1:
         botoes_acao = [
             InlineKeyboardButton(
                 '🔍 Filtrar Resultados', callback_data='mostrar_filtros'
@@ -233,7 +234,8 @@ def criar_teclado_resultados_combinado(
         ]
         keyboard_rows.append(botoes_acao)
 
-    # 3. Botão de Sugestões (sempre presente, se houver resultados)
+    # 3. Botão de Sugestões (presente se houver resultados)
+    # Sugestões podem ser aplicáveis a um único resultado também.
     if total_resultados > 0:
         botoes_sugestao = [
             InlineKeyboardButton(
@@ -246,3 +248,55 @@ def criar_teclado_resultados_combinado(
         return None
 
     return InlineKeyboardMarkup(keyboard_rows)
+
+
+def teclado_endereco_nao_encontrado_criar() -> InlineKeyboardMarkup:
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🔍 Tentar outro código",
+                callback_data='tentar_outro_codigo_anotacao',
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "❌ Cancelar", callback_data='cancelar_nova_anotacao_direto'
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def teclado_simples_cancelar_anotacao() -> InlineKeyboardMarkup:
+    """Retorna um teclado inline com um único botão 'Cancelar'."""
+    button = [
+        InlineKeyboardButton(
+            "❌ Cancelar", callback_data="cancelar_processo_anotacao"
+        )
+    ]
+    return InlineKeyboardMarkup([button])
+
+
+def criar_teclado_acoes_endereco(id_endereco: int) -> InlineKeyboardMarkup:
+    """
+    Cria teclado com ações para um endereço específico (anotações).
+
+    Args:
+        id_endereco: O ID do endereço.
+
+    Returns:
+        Teclado inline com ações de anotação.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "📝 Fazer Anotação",
+                callback_data=f'fazer_anotacao_{id_endereco}'
+            ),
+            InlineKeyboardButton(
+                "📖 Ler Anotações",
+                callback_data=f'ler_anotacoes_{id_endereco}'
+            ),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
