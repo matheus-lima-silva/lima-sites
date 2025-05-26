@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 from ..config import ITENS_POR_PAGINA
 from ..formatters import formatar_endereco, formatar_lista_resultados
 from ..keyboards import (
+    criar_teclado_acoes_endereco,  # Adicionado
     criar_teclado_compartilhar_localizacao,
     criar_teclado_resultados_combinado,
 )
@@ -229,6 +230,93 @@ async def _registrar_busca_para_lista(itens_pagina, user_id_telegram):
                 logger.error('Erro ao registrar busca: %s', e)
 
 
+async def _processar_resultado_unico(
+    update: Update,
+    endereco: Dict[str, Any],
+    user_id_telegram: int,
+    id_endereco_param: Optional[int],
+    params_busca: Dict[str, Any],
+) -> None:
+    """Processa e responde quando há um único resultado de busca."""
+    mensagem = formatar_endereco(endereco)
+    id_endereco_atual = endereco.get('id')
+    logger.info(f'Resultado único. Endereço: {endereco}')
+    logger.info(f'ID do endereço atual: {id_endereco_atual}')
+
+    if user_id_telegram and id_endereco_atual:
+        info_adicional = (
+            f'Busca resultou em único endereço: '
+            f'{id_endereco_param or params_busca}'
+        )
+        await registrar_busca(
+            id_usuario=user_id_telegram,
+            id_endereco=id_endereco_atual,
+            info_adicional=info_adicional,
+            user_id=user_id_telegram,  # Passando user_id para o serviço
+        )
+
+    reply_markup = None
+    if id_endereco_atual:
+        logger.info(
+            f'Criando teclado de ações para o ID: {id_endereco_atual}'
+        )
+        reply_markup = criar_teclado_acoes_endereco(
+            id_endereco=id_endereco_atual
+        )
+        logger.info(f'Teclado de ações criado: {reply_markup}')
+    else:
+        logger.warning(
+            'ID do endereço não encontrado. '
+            'Teclado de ações não será exibido.'
+        )
+        logger.info(
+            'Nenhum teclado de ação será exibido para resultado único sem ID.'
+        )
+
+    await update.message.reply_text(
+        mensagem,
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=reply_markup,
+    )
+
+
+async def _processar_multiplos_resultados(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    lista: list,
+    user_id_telegram: int,
+) -> None:
+    """Processa e responde quando há múltiplos resultados de busca."""
+    total_resultados = len(lista)
+    logger.info(
+        f'Múltiplos resultados: {total_resultados}. '
+        'Criando teclado de resultados combinado.'
+    )
+    total_paginas = (
+        total_resultados + ITENS_POR_PAGINA - 1
+    ) // ITENS_POR_PAGINA
+    itens_pagina = lista[:ITENS_POR_PAGINA]
+    mensagem = (
+        f'🏢 *Encontrados {total_resultados} endereços*\n\n'
+        + formatar_lista_resultados(
+            itens_pagina, 0, total_paginas, formatar_endereco
+        )
+    )
+    if user_id_telegram:
+        await _registrar_busca_para_lista(itens_pagina, user_id_telegram)
+
+    reply_markup = criar_teclado_resultados_combinado(
+        pagina_atual=0, total_resultados=total_resultados
+    )
+    logger.info(f'Teclado de resultados combinado criado: {reply_markup}')
+
+    await update.message.reply_text(
+        mensagem,
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=reply_markup,
+    )
+
+
 async def _processar_busca(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -251,9 +339,8 @@ async def _processar_busca(
         params_busca = params_busca or {}
         latitude = params_busca.get('latitude')
         longitude = params_busca.get('longitude')
-        id_endereco = params_busca.get('id_endereco')
+        id_endereco_param = params_busca.get('id_endereco')
 
-        # Busca por coordenadas ou parâmetros
         if latitude and longitude:
             resultados = await buscar_por_coordenadas(
                 latitude, longitude, user_id=user_id_telegram
@@ -261,12 +348,11 @@ async def _processar_busca(
         else:
             resultados = await buscar_endereco(
                 query=params_busca.get('query'),
-                id_endereco=id_endereco,
+                id_endereco=id_endereco_param,
                 cep=params_busca.get('cep'),
                 municipio=params_busca.get('municipio'),
                 uf=params_busca.get('uf'),
-                operadora_id=None,
-                # Mantido como None, pois refere-se ao ID da operadora
+                operadora_id=None,  # Adicionado para clareza
                 user_id=user_id_telegram,
             )
 
@@ -283,50 +369,22 @@ async def _processar_busca(
             )
             return
 
-        # Salva resultados para paginação
         context.user_data['resultados_busca'] = lista
         context.user_data['pagina_atual'] = 0
-        total_resultados = len(lista)
-        total_paginas = (
-            total_resultados + ITENS_POR_PAGINA - 1
-        ) // ITENS_POR_PAGINA
 
-        # Formatação e registro
-        if id_endereco and len(lista) == 1:
-            endereco = lista[0]
-            mensagem = formatar_endereco(endereco)
-            if (
-                user_id_telegram
-                and isinstance(endereco, dict)
-                and endereco.get('id')
-            ):
-                await registrar_busca(
-                    id_usuario=user_id_telegram,
-                    id_endereco=endereco['id'],
-                    info_adicional=f'Busca por ID: {id_endereco}',
-                    user_id=user_id_telegram,  # Adicionado user_id
-                )
-        else:
-            itens_pagina = lista[:ITENS_POR_PAGINA]
-            mensagem = (
-                f'🏢 *Encontrados {total_resultados} endereços*\n\n'
-                + formatar_lista_resultados(
-                    itens_pagina, 0, total_paginas, formatar_endereco
-                )
+        if len(lista) == 1:
+            await _processar_resultado_unico(
+                update,
+                lista[0],
+                user_id_telegram,
+                id_endereco_param,
+                params_busca,
             )
-            if user_id_telegram:  # Usar user_id_telegram
-                await _registrar_busca_para_lista(
-                    itens_pagina, user_id_telegram
-                )
+        else:
+            await _processar_multiplos_resultados(
+                update, context, lista, user_id_telegram
+            )
 
-        reply_markup = criar_teclado_resultados_combinado(
-            pagina_atual=0, total_resultados=total_resultados
-        )
-        await update.message.reply_text(
-            mensagem,
-            parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=reply_markup,
-        )
     except Exception as e:
         logger.error(
             'Erro ao processar busca: %s (tipo: %s)', e, type(e).__name__
@@ -345,6 +403,7 @@ async def _processar_busca_operadora(
     """
     Busca endereços por operadora e exibe resultados paginados.
     """
+    # Logger já está definido no nível do módulo
     try:
         if not update.effective_user:
             logger.error(
@@ -378,37 +437,85 @@ async def _processar_busca_operadora(
         context.user_data['resultados_busca'] = lista
         context.user_data['pagina_atual'] = 0
         total_resultados = len(lista)
-        total_paginas = (
-            total_resultados + ITENS_POR_PAGINA - 1
-        ) // ITENS_POR_PAGINA
-        itens_pagina = lista[:ITENS_POR_PAGINA]
-        mensagem = (
-            f'🏢 *Encontrados {total_resultados} endereços da operadora*\n\n'
-            + formatar_lista_resultados(
+
+        reply_markup = None  # Inicializa reply_markup
+        mensagem = ''  # Inicializa mensagem
+
+        if total_resultados == 1:
+            endereco = lista[0]
+            mensagem = formatar_endereco(endereco)
+            id_endereco_atual = endereco.get('id')
+            logger.info(f'Resultado único (operadora). Endereço: {endereco}')
+            logger.info(
+                f'ID do endereço atual (operadora): {id_endereco_atual}'
+            )
+
+            if user_id_telegram and id_endereco_atual:
+                info_adicional = (
+                    f"Busca por operadora '{codigo_operadora}' "
+                    f'resultou em único endereço.'
+                )
+                await registrar_busca(
+                    id_usuario=user_id_telegram,
+                    id_endereco=id_endereco_atual,
+                    info_adicional=info_adicional,
+                    user_id=user_id_telegram,
+                )
+
+            if id_endereco_atual:
+                logger.info(
+                    'Criando teclado de ações para o ID (operadora): '
+                    f'{id_endereco_atual}'
+                )
+                reply_markup = criar_teclado_acoes_endereco(
+                    id_endereco=id_endereco_atual
+                )
+                logger.info(
+                    f'Teclado de ações criado (operadora): {reply_markup}'
+                )
+            else:
+                logger.warning(
+                    'ID do endereço não encontrado (operadora). '
+                    'Teclado de ações não será exibido.'
+                )
+                logger.info(
+                    'Nenhum teclado de ação será exibido para resultado único '
+                    'sem ID (operadora).'
+                )
+        else:  # Múltiplos resultados
+            logger.info(
+                f'Múltiplos resultados (operadora): {total_resultados}. '
+                'Criando teclado de resultados combinado.'
+            )
+            total_paginas = (
+                total_resultados + ITENS_POR_PAGINA - 1
+            ) // ITENS_POR_PAGINA
+            itens_pagina = lista[:ITENS_POR_PAGINA]
+            mensagem = (
+                f'🏢 *Encontrados {total_resultados} endereços '
+                f'da operadora*\\n\\n'
+            ) + formatar_lista_resultados(
                 itens_pagina, 0, total_paginas, formatar_endereco
             )
-        )
-        if user_id_telegram:  # Usar user_id_telegram
-            for endereco in itens_pagina:
-                if isinstance(endereco, dict) and endereco.get('id'):
-                    try:
-                        await registrar_busca(
-                            id_usuario=user_id_telegram,
-                            id_endereco=endereco['id'],
-                            info_adicional=(
-                                f'Busca por operadora: {codigo_operadora}'
-                            ),
-                            user_id=user_id_telegram,  # Adicionado user_id
-                        )
-                    except Exception as e:
-                        logger.error('Erro ao registrar busca: %s', e)
-        reply_markup = criar_teclado_resultados_combinado(
-            pagina_atual=0, total_resultados=total_resultados
-        )
+            if user_id_telegram:
+                await _registrar_busca_para_lista(
+                    itens_pagina, user_id_telegram
+                )  # Reutiliza a função auxiliar
+            reply_markup = criar_teclado_resultados_combinado(
+                pagina_atual=0, total_resultados=total_resultados
+            )
+            logger.info(
+                'Teclado de resultados combinado criado (operadora): '
+                f'{reply_markup}'
+            )
+
         await update.message.reply_text(
             mensagem,
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=reply_markup,
+        )
+        logger.info(
+            f'Mensagem enviada com reply_markup (operadora): {reply_markup}'
         )
     except Exception as e:
         logger.error(
