@@ -4,6 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from .bot.main import (
+    iniciar_bot as inicializar_handlers_telegram,
+)
+from .bot.main import (
+    obter_aplicacao,  # Importar obter_aplicacao
+)
 from .database import engine
 from .routers import (
     alteracoes_router,
@@ -16,10 +22,6 @@ from .routers import (
 )
 from .routers.enderecos import enderecos_app
 from .scheduler import iniciar_tarefas_agendadas, parar_tarefas_agendadas
-from .bot.main import (
-    iniciar_bot as inicializar_handlers_telegram,
-    obter_aplicacao,  # Importar obter_aplicacao
-)
 
 
 @asynccontextmanager
@@ -51,7 +53,9 @@ async def lifespan(app: FastAPI):
     telegram_app = obter_aplicacao()
     if telegram_app:
         if telegram_app.updater and telegram_app.updater.running:
-            await telegram_app.updater.stop()  # Parar o updater se estiver rodando (para polling)
+            await (
+                telegram_app.updater.stop()
+            )  # Parar o updater se estiver rodando (para polling)
         await telegram_app.stop()
         await telegram_app.shutdown()
         print('✅ Bot do Telegram parado com sucesso!')
