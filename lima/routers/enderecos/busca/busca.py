@@ -392,8 +392,8 @@ async def buscar_por_operadora(
 
             # Processar anotações se necessário
             if hasattr(endereco, 'anotacoes') and endereco.anotacoes:
-                anotacoes_filtradas = filtrar_anotacoes_por_acesso(
-                    endereco.anotacoes, current_user
+                anotacoes_filtradas = await filtrar_anotacoes_por_acesso(
+                    endereco.anotacoes, current_user, session
                 )
                 anotacoes_resumidas = []
 
