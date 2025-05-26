@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 _application: Optional[Application] = None
 
 
-async def error_handler(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE) -> None:
+async def error_handler(
+    update: Optional[Update], context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """
     Manipulador global de erros.
     """
@@ -45,7 +47,8 @@ async def error_handler(update: Optional[Update], context: ContextTypes.DEFAULT_
     if update and update.effective_chat:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text='😞 Ocorreu um erro ao processar sua solicitação. Por favor, tente novamente mais tarde.',
+            text='😞 Ocorreu um erro ao processar sua solicitação.'
+            ' Por favor, tente novamente mais tarde.',
         )
 
 
@@ -67,13 +70,14 @@ def configurar_logging() -> None:
 
 
 def criar_aplicacao() -> Application:
-    global _application
     """
     Cria e configura a aplicação do bot.
 
     Returns:
         Aplicação configurada e pronta para uso.
     """
+    global _application
+
     # Configura logging
     configurar_logging()
 
@@ -90,6 +94,8 @@ def criar_aplicacao() -> Application:
     except Exception as e:
         logger.error(f'Erro ao criar aplicação: {str(e)}')
         sys.exit(1)
+
+    _application = application
 
     # Registra o handler de erros
     application.add_error_handler(error_handler)
@@ -132,6 +138,7 @@ def criar_aplicacao() -> Application:
     )
 
     # Callbacks de botões inline
+    # Callbacks de botões inline
     application.add_handler(CallbackQueryHandler(handle_callback))
 
     # Mensagem para comandos desconhecidos
@@ -139,7 +146,6 @@ def criar_aplicacao() -> Application:
         MessageHandler(filters.COMMAND, comando_desconhecido)
     )
 
-    _application = application
     return application
 
 
@@ -169,7 +175,8 @@ async def iniciar_bot() -> None:
             # Verifica a URL do webhook
             if not WEBHOOK_URL:
                 logger.error(
-                    'URL do webhook não configurada. Configure WEBHOOK_URL no arquivo .env'
+                    'URL do webhook não configurada. Configure WEBHOOK_URL no'
+                    ' arquivo .env'
                 )
                 sys.exit(1)
 
@@ -177,7 +184,8 @@ async def iniciar_bot() -> None:
             webhook_path = TOKEN_BOT
             webhook_url = f'{WEBHOOK_URL}/{webhook_path}'
 
-            # Para webhook, run_webhook é bloqueante e gerencia seu próprio loop.
+            # Para webhook, run_webhook é bloqueante e gerencia seu próprio
+            #  loop.
             # No entanto, se FastAPI/Uvicorn já está rodando, o ideal é
             # configurar o webhook externamente e apenas processar updates.
             # Esta abordagem aqui é mais para um bot standalone com webhook.
@@ -196,8 +204,12 @@ async def iniciar_bot() -> None:
             # os updates são passados para application.update_queue.
         else:
             logger.info('Iniciando bot usando polling')
-            await application.initialize() # Adicionado para inicialização explícita
-            await application.start()      # Inicia o polling de forma não-bloqueante
+            await (
+                application.initialize()
+            )  # Adicionado para inicialização explícita
+            await (
+                application.start()
+            )  # Inicia o polling de forma não-bloqueante
             # application.run_polling(allowed_updates=Update.ALL_TYPES)
 
     except TelegramError as e:
