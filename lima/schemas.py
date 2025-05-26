@@ -371,21 +371,48 @@ class AlteracaoRead(AlteracaoBase, BaseEntitySchema):
 # ---------- ANOTACAO ----------
 class AnotacaoBase(BaseModel):
     id_endereco: int
-    id_usuario: int
+    # id_usuario: int # Removido - será obtido do current_user na API
     texto: str = Field(..., example='Endereço verificado pessoalmente')
 
 
-class AnotacaoCreate(AnotacaoBase):
-    pass
+class AnotacaoCreate(BaseModel):  # Modificado para não herdar id_usuario
+    id_endereco: int
+    texto: str = Field(..., example='Endereço verificado pessoalmente')
 
 
 class AnotacaoUpdate(BaseModel):
     texto: str = Field(..., example='Endereço verificado pessoalmente')
 
 
-class AnotacaoRead(AnotacaoBase, BaseEntitySchema):
+# Schemas resumidos para AnotacaoRead
+
+class UsuarioResumidoParaAnotacao(BaseModel):
+    id: int
+    nome: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EnderecoResumidoParaAnotacao(BaseModel):
+    id: int
+    codigo_endereco: str
+    municipio: Optional[str] = None
+    uf: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AnotacaoRead(BaseModel):  # Modificado para ter relações explícitas
+    id: int
+    texto: str
     data_criacao: datetime
     data_atualizacao: datetime
+    id_endereco: int  # Mantido para referência direta, se necessário
+    id_usuario: int  # Mantido para referência direta, se necessário
+    usuario: UsuarioResumidoParaAnotacao
+    endereco: EnderecoResumidoParaAnotacao
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------- ANOTACAO RESUMIDA (para exibição em endpoints de endereços) -----
