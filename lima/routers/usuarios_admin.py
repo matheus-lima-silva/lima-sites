@@ -46,7 +46,6 @@ async def get_usuario_or_404(
 
 
 @router.get('/', response_model=List[UsuarioPublic])
-           
 async def listar_usuarios(
     session: AsyncSessionDep,
     skip: SkipQueryDep,
@@ -66,7 +65,8 @@ async def listar_usuarios(
     return resultado
 
 
-@router.put('/{usuario_id}/nivel-acesso', response_model=UsuarioPublic)  # Alterado de UsuarioRead para UsuarioPublic
+# Alterado de UsuarioRead para UsuarioPublic
+@router.put('/{usuario_id}/nivel-acesso', response_model=UsuarioPublic)
 async def atualizar_nivel_acesso(
     nivel_acesso: NivelAcesso,
     session: AsyncSessionDep,
@@ -123,7 +123,8 @@ async def remover_usuario(
     await session.commit()
 
 
-@router.get('/por-telefone/{telefone}', response_model=UsuarioPublic)  # Alterado de UsuarioRead para UsuarioPublic
+# Alterado de UsuarioRead para UsuarioPublic
+@router.get('/por-telefone/{telefone}', response_model=UsuarioPublic)
 async def buscar_por_telefone(
     session: AsyncSessionDep,
     telefone: str,  # Usando validação de telefone do Path padrão

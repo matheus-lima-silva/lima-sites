@@ -41,7 +41,8 @@ async def get_usuario_or_404(session, usuario_id: int) -> Usuario:
 @router.post(
     '/',
     response_model=UsuarioPublic,
-    status_code=status.HTTP_201_CREATED,  # Alterado de UsuarioRead para UsuarioPublic
+    # Alterado de UsuarioRead para UsuarioPublic
+    status_code=status.HTTP_201_CREATED,
 )
 async def criar_usuario(
     usuario: UsuarioCreate,
@@ -234,7 +235,7 @@ async def atualizar_nome_usuario(
 async def obter_usuario_por_telefone(
     telefone: str,
     session: AsyncSessionDep,
-    # current_user: CurrentUserDep, # Removido para permitir acesso interno do bot
+    # current_user: CurrentUserDep, # Removido para permitir acesso interno
 ):
     """Retorna informações do usuário pelo telefone.
     Usado pelo bot Telegram.

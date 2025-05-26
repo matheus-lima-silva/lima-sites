@@ -33,7 +33,7 @@ router = APIRouter(prefix='/auth', tags=['auth'])
 @router.post('/login', response_model=Token)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    session: AsyncSession = Depends(get_async_session),
+    session: Annotated[AsyncSession, Depends(get_async_session)],
 ):
     # Esta rota é para login de usuário padrão com email/senha.
     # A função authenticate_user original precisaria ser adaptada ou
@@ -69,7 +69,7 @@ async def login_for_access_token(
 async def register_telegram_user_via_api(
     payload: TelegramUserRegistrationRequest,
         # Alterado para receber o payload no corpo da requisição
-    session: AsyncSession = Depends(get_async_session),
+    session: Annotated[AsyncSession, Depends(get_async_session)],
 ):
     """
     Registra ou obtém um usuário com base no ID do Telegram.

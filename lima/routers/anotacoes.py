@@ -77,24 +77,24 @@ async def criar_anotacao(
     dos dados estruturados, como observações de campo,
     dificuldades de acesso, contatos locais, etc.
     """
-    async with session.begin():  # Usando transação explícita
-        # Verifica se o endereço existe usando método get otimizado
-        endereco = await session.get(Endereco, anotacao.id_endereco)
+    # Verifica se o endereço existe usando método get otimizado
+    endereco = await session.get(Endereco, anotacao.id_endereco)
 
-        if not endereco:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Endereço não encontrado',
-            )
-
-        # Sobrescreve o id_usuario com o ID do usuário autenticado
-        db_anotacao = Anotacao(
-            id_endereco=anotacao.id_endereco,
-            id_usuario=current_user.id,
-            texto=anotacao.texto,
+    if not endereco:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail='Endereço não encontrado',
         )
 
-        session.add(db_anotacao)
+    # Sobrescreve o id_usuario com o ID do usuário autenticado
+    db_anotacao = Anotacao(
+        id_endereco=anotacao.id_endereco,
+        id_usuario=current_user.id,
+        texto=anotacao.texto,
+    )
+
+    session.add(db_anotacao)
+    await session.commit()
 
     # Carrega a anotação com as relações para retorno
     await session.refresh(db_anotacao, ['endereco', 'usuario'])
