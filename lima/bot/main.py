@@ -18,6 +18,7 @@ from telegram.ext import (
     filters,
 )
 
+from ..settings import Settings  # Adicionar esta importação
 from .config import (
     LOG_LEVEL,
     SECRET_TOKEN,
@@ -31,7 +32,25 @@ from .handlers.callback import handle_callback
 
 logger = logging.getLogger(__name__)
 
-_application: Optional[Application] = None
+
+# Classe para gerenciar a instância da aplicação
+class BotManager:
+    """Gerenciador da aplicação do bot."""
+
+    def __init__(self):
+        self._application: Optional[Application] = None
+
+    def set_application(self, application: Application) -> None:
+        """Define a instância da aplicação."""
+        self._application = application
+
+    def get_application(self) -> Optional[Application]:
+        """Retorna a instância da aplicação."""
+        return self._application
+
+
+# Instância global do gerenciador
+_bot_manager = BotManager()
 
 
 async def error_handler(
@@ -56,17 +75,33 @@ def configurar_logging() -> None:
     """
     Configura o logging do bot.
     """
-    nivel = getattr(logging, LOG_LEVEL)
+    # Adicionar esta linha para ler as configurações
+    settings = Settings()
+    # Modificar esta linha para usar settings.DEBUG
+    nivel_log = (
+        logging.DEBUG if settings.DEBUG else getattr(logging, LOG_LEVEL)
+    )
 
     # Configura o logger principal
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        level=nivel,
+        # Modificar esta linha
+        level=nivel_log,
     )
 
     # Configura loggers específicos
+    # Você pode querer diminuir o nível aqui também se precisar de
+    #  logs mais detalhados deles
     logging.getLogger('httpx').setLevel(logging.WARNING)
-    logging.getLogger('telegram').setLevel(logging.WARNING)
+    logging.getLogger('telegram').setLevel(
+        logging.INFO if settings.DEBUG else logging.WARNING
+    )  # Alterado para INFO em DEBUG
+    logging.getLogger('ptb.dispatcher').setLevel(
+        logging.DEBUG if settings.DEBUG else logging.INFO
+    )  # Adicionado para logs do dispatcher
+    logging.getLogger('telegram.ext.ConversationHandler').setLevel(
+        logging.DEBUG if settings.DEBUG else logging.INFO
+    )
 
 
 def criar_aplicacao() -> Application:
@@ -76,8 +111,6 @@ def criar_aplicacao() -> Application:
     Returns:
         Aplicação configurada e pronta para uso.
     """
-    global _application
-
     # Configura logging
     configurar_logging()
 
@@ -94,8 +127,6 @@ def criar_aplicacao() -> Application:
     except Exception as e:
         logger.error(f'Erro ao criar aplicação: {str(e)}')
         sys.exit(1)
-
-    _application = application
 
     # Registra o handler de erros
     application.add_error_handler(error_handler)
@@ -130,6 +161,7 @@ def criar_aplicacao() -> Application:
     application.add_handler(sugestao.get_sugestao_conversation())
 
     # Conversa de anotação
+    # ESTE DEVE VIR ANTES DO CALLBACKQUERYHANDLER GENÉRICO
     application.add_handler(anotacao.get_anotacao_conversation())
 
     # Comando para listar anotações
@@ -138,7 +170,7 @@ def criar_aplicacao() -> Application:
     )
 
     # Callbacks de botões inline
-    # Callbacks de botões inline
+    # ESTE DEVE VIR DEPOIS DOS CONVERSATIONHANDLERS QUE USAM CALLBACKS
     application.add_handler(CallbackQueryHandler(handle_callback))
 
     # Mensagem para comandos desconhecidos
@@ -166,6 +198,7 @@ async def iniciar_bot() -> None:
     """
     # Cria e configura a aplicação
     application = criar_aplicacao()
+    _bot_manager.set_application(application)
 
     try:
         # Inicia o bot
@@ -221,9 +254,10 @@ async def iniciar_bot() -> None:
 
 
 if __name__ == '__main__':
-    iniciar_bot()
+    import asyncio
+    asyncio.run(iniciar_bot())
 
 
 def obter_aplicacao() -> Optional[Application]:
     """Retorna a instância da aplicação do bot, se inicializada."""
-    return _application
+    return _bot_manager.get_application()
