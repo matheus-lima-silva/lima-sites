@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -13,7 +12,7 @@ from .settings import Settings
 settings = Settings()
 DATABASE_URL = settings.DATABASE_URL
 
-# Com PostgreSQL, podemos usar totalmente o modo assíncrono
+# Engine principal assíncrono para a API
 engine = create_async_engine(
     DATABASE_URL,
     # Ativa logs SQL em modo DEBUG
@@ -37,11 +36,12 @@ async_session = async_sessionmaker(
 
 
 # Configuração para garantir que datetimes sejam sempre tratados com timezone
-@event.listens_for(engine.sync_engine, 'connect')
-def set_timezone(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("SET timezone='UTC'")
-    cursor.close()
+# Comentado pois não temos mais engine síncrono
+# @event.listens_for(engine.sync_engine, 'connect')
+# def set_timezone_async(dbapi_connection, connection_record):
+#     cursor = dbapi_connection.cursor()
+#     cursor.execute("SET timezone='UTC'")
+#     cursor.close()
 
 
 # Função para garantir que datetimes sejam sempre gerados com timezone
@@ -60,3 +60,7 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
     finally:
         await session.close()
+
+
+# Alias para compatibilidade com dependências existentes
+get_db = get_async_session

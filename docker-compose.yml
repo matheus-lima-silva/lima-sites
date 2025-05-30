@@ -24,11 +24,45 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://lima_user:lima_password@db:5432/lima_db
       SECRET_KEY: ${SECRET_KEY:-changeme}
+      API_URL: http://127.0.0.1:8000  # Bot e API no mesmo container - usar 127.0.0.1
+      API_TIMEOUT: 10  # Reduzir timeout para evitar travamentos
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL}
+      TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
+      DEBUG: ${DEBUG:-false}
     ports:
       - "8000:8000"
     volumes:
       - .:/app
     restart: always
+
+  webhook-config:
+    image: alpine/curl:latest
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_WEBHOOK_URL: ${TELEGRAM_WEBHOOK_URL}
+      TELEGRAM_SECRET_TOKEN: ${TELEGRAM_SECRET_TOKEN:-}
+    command: >
+      sh -c "
+        echo 'Aguardando aplicação estar pronta...' &&
+        sleep 30 &&
+        echo 'Configurando webhook do Telegram...' &&
+        if [ -n \"$$TELEGRAM_BOT_TOKEN\" ] && [ -n \"$$TELEGRAM_WEBHOOK_URL\" ]; then
+          if [ -n \"$$TELEGRAM_SECRET_TOKEN\" ]; then
+            curl -X POST \"https://api.telegram.org/bot$$TELEGRAM_BOT_TOKEN/setWebhook\" -H \"Content-Type: application/json\" -d \"{\\\"url\\\": \\\"$$TELEGRAM_WEBHOOK_URL\\\", \\\"secret_token\\\": \\\"$$TELEGRAM_SECRET_TOKEN\\\", \\\"drop_pending_updates\\\": true}\" &&
+            echo 'Webhook configurado com sucesso (com secret token)';
+          else
+            curl -X POST \"https://api.telegram.org/bot$$TELEGRAM_BOT_TOKEN/setWebhook\" -H \"Content-Type: application/json\" -d \"{\\\"url\\\": \\\"$$TELEGRAM_WEBHOOK_URL\\\", \\\"drop_pending_updates\\\": true}\" &&
+            echo 'Webhook configurado com sucesso (sem secret token)';
+          fi
+        else
+          echo 'Token do bot ou URL do webhook não configurados. Pulando configuração do webhook.';
+        fi
+      "
+    restart: "no"
 
 volumes:
   postgres_data:
