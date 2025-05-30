@@ -1,11 +1,11 @@
 from datetime import datetime, timezone
-from typing import Annotated, List
+from typing import Annotated, List, Literal  # Ordem alterada
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
-from sqlalchemy.orm import joinedload, selectinload
 
+from ..core.loading_options import ANOTACAO_LOAD_OPTIONS  # Adicionado
 from ..models import Anotacao, Endereco, NivelAcesso
 from ..schemas import AnotacaoCreate, AnotacaoRead, AnotacaoUpdate
 from ..utils.decorators import (
@@ -17,14 +17,12 @@ from ..utils.dependencies import (
     AsyncSessionDep,
     CurrentUserDep,
     IdPathDep,
-    LimitQueryDep,
-    OrderDescQueryDep,
-    SkipQueryDep,
-    create_order_by_dependency,
+    create_order_by_dependency,  # Mantido
 )
 from ..utils.resource_validators import get_resource_or_none
 
 router = APIRouter(prefix='/anotacoes', tags=['Anotações'])
+
 
 # Usando a função auxiliar para criar uma dependência de ordenação específica para anotações  # noqa: E501
 AnotacaoOrderByDep = create_order_by_dependency(
@@ -35,13 +33,20 @@ AnotacaoOrderByDep = create_order_by_dependency(
 class ListagemParams(BaseModel):
     """Parâmetros para listagem de anotações."""
 
-    order_by: str = Field(
+    order_by: Literal['data_criacao', 'data_atualizacao'] = Field(
         default='data_criacao',
         description='Campo para ordenação (data_criacao, data_atualizacao)',
     )
     desc: bool = Field(default=True, description='Ordenação decrescente')
-    skip: int = Field(default=0, description='Número de registros a pular')
-    limit: int = Field(default=100, description='Número máximo de registros')
+    skip: int = Field(
+        default=0, ge=0, description='Número de registros a pular'
+    )
+    limit: int = Field(
+        default=100,
+        ge=1,
+        le=200,  # Ajuste o limite máximo conforme necessário
+        description='Número máximo de registros',
+    )
 
 
 # O restante do código permanece o mesmo, mas podemos usar as novas dependências  # noqa: E501
@@ -95,10 +100,24 @@ async def criar_anotacao(
 
     session.add(db_anotacao)
     await session.commit()
+    # await session.refresh(
+    #     db_anotacao, ['endereco', 'usuario']
+    # )  # Removido refresh antigo
 
-    # Carrega a anotação com as relações para retorno
-    await session.refresh(db_anotacao, ['endereco', 'usuario'])
-    return db_anotacao
+    # Recarregar com todas as opções para garantir que o schema de resposta
+    # seja preenchido
+    loaded_anotacao = await session.scalar(
+        select(Anotacao)
+        .options(*ANOTACAO_LOAD_OPTIONS)
+        .where(Anotacao.id == db_anotacao.id)
+    )
+    if not loaded_anotacao:
+        # Este caso não deveria acontecer se o commit foi bem-sucedido
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro ao recarregar anotação após criação.',
+        )
+    return loaded_anotacao
 
 
 # Rotas específicas devem vir antes das genéricas com parâmetros
@@ -106,20 +125,7 @@ async def criar_anotacao(
 async def listar_minhas_anotacoes(
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
-    query_params: Annotated[
-        dict,
-        Depends(
-            lambda order_by=AnotacaoOrderByDep,
-            desc=OrderDescQueryDep,
-            skip=SkipQueryDep,
-            limit=LimitQueryDep: {
-                'order_by': order_by,
-                'desc': desc,
-                'skip': skip,
-                'limit': limit,
-            }
-        ),
-    ],
+    params: Annotated[ListagemParams, Depends()],
 ):
     """
     Lista todas as anotações feitas pelo usuário atual
@@ -127,33 +133,34 @@ async def listar_minhas_anotacoes(
     * Requer autenticação
     * Suporta paginação e ordenação
     """
-    # Extrair parâmetros do dicionário
-    order_by = query_params['order_by']
-    desc = query_params['desc']
-    skip = query_params['skip']
-    limit = query_params['limit']
+    # Extrair parâmetros do objeto params
+    order_by = params.order_by
+    desc = params.desc
+    skip = params.skip
+    limit = params.limit
 
     # Construir ordenação conforme parâmetros
     if order_by == 'data_atualizacao':
         order_field = Anotacao.data_atualizacao
-    else:
+    else:  # default para data_criacao, já validado por ListagemParams
         order_field = Anotacao.data_criacao
 
     # Aplicar direção da ordenação
     order_clause = order_field.desc() if desc else order_field.asc()
 
-    # Consulta com eager loading
+    # Consulta com eager loading usando ANOTACAO_LOAD_OPTIONS
     stmt = (
         select(Anotacao)
-        .options(joinedload(Anotacao.endereco))
+        .options(*ANOTACAO_LOAD_OPTIONS)  # Aplicando opções centralizadas
         .where(Anotacao.id_usuario == current_user.id)
         .order_by(order_clause)
         .offset(skip)
         .limit(limit)
     )
 
-    anotacoes = await session.scalars(stmt)
-    return list(anotacoes)
+    result = await session.scalars(stmt)
+    anotacoes = list(result.all())
+    return anotacoes
 
 
 @router.get('/endereco/{endereco_id}', response_model=List[AnotacaoRead])
@@ -161,15 +168,7 @@ async def listar_anotacoes_do_endereco(
     endereco_id: int,
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
-    query_params: Annotated[
-        dict,
-        Depends(
-            lambda order_by=AnotacaoOrderByDep, desc=OrderDescQueryDep: {
-                'order_by': order_by,
-                'desc': desc,
-            }
-        ),
-    ],
+    params: Annotated[ListagemParams, Depends()],
 ):
     """
     Lista todas as anotações de um endereço específico
@@ -177,10 +176,13 @@ async def listar_anotacoes_do_endereco(
     * Requer autenticação
     * Usuários básicos só veem suas próprias anotações
     * Usuários intermediários e super_usuários veem todas as anotações
+    * Suporta paginação e ordenação
     """
-    # Extrair parâmetros do dicionário
-    order_by = query_params['order_by']
-    desc = query_params['desc']
+    # Extrair parâmetros do objeto params
+    order_by = params.order_by
+    desc = params.desc
+    skip = params.skip
+    limit = params.limit
 
     # Verifica se o endereço existe usando método get otimizado
     endereco = await session.get(Endereco, endereco_id)
@@ -204,7 +206,7 @@ async def listar_anotacoes_do_endereco(
         # Usuários básicos só veem suas próprias anotações
         stmt = (
             select(Anotacao)
-            .options(joinedload(Anotacao.usuario))
+            .options(*ANOTACAO_LOAD_OPTIONS)  # Aplicando opções centralizadas
             .where(
                 and_(
                     Anotacao.id_endereco == endereco_id,
@@ -212,18 +214,23 @@ async def listar_anotacoes_do_endereco(
                 )
             )
             .order_by(order_clause)
+            .offset(skip)
+            .limit(limit)
         )
     else:
         # Usuários com maior privilégio veem todas as anotações
         stmt = (
             select(Anotacao)
-            .options(joinedload(Anotacao.usuario))
+            .options(*ANOTACAO_LOAD_OPTIONS)  # Aplicando opções centralizadas
             .where(Anotacao.id_endereco == endereco_id)
             .order_by(order_clause)
+            .offset(skip)
+            .limit(limit)
         )
 
-    anotacoes = await session.scalars(stmt)
-    return list(anotacoes)
+    result = await session.scalars(stmt)
+    anotacoes = list(result.all())
+    return anotacoes
 
 
 @router.get('/busca', response_model=List[AnotacaoRead])
@@ -243,7 +250,7 @@ async def buscar_anotacoes(
     if current_user.nivel_acesso == NivelAcesso.basico:
         stmt = (
             select(Anotacao)
-            .options(joinedload(Anotacao.endereco))
+            .options(*ANOTACAO_LOAD_OPTIONS)  # Aplicando opções centralizadas
             .where(
                 and_(
                     Anotacao.id_usuario == current_user.id,
@@ -254,13 +261,9 @@ async def buscar_anotacoes(
             .limit(50)
         )
     else:
-        # Usando busca mais avançada para usuários
-        # privilegiados com recursos do PostgreSQL
         stmt = (
             select(Anotacao)
-            .options(
-                joinedload(Anotacao.endereco), joinedload(Anotacao.usuario)
-            )
+            .options(*ANOTACAO_LOAD_OPTIONS)  # Aplicando opções centralizadas
             .where(Anotacao.texto.ilike(f'%{query}%'))
             .order_by(Anotacao.data_atualizacao.desc())
             .limit(50)
@@ -291,11 +294,15 @@ async def obter_anotacao(
     * Usuários intermediários e super_usuários podem ver todas as anotações
     """
     # Usando a função utilitária para buscar o recurso com relações
-
-    options = [selectinload(Anotacao.endereco), selectinload(Anotacao.usuario)]
-
+    # options = [
+    #     selectinload(Anotacao.endereco),
+    #     selectinload(Anotacao.usuario)
+    # ]  # Removido
     anotacao = await get_resource_or_none(
-        session, Anotacao, {'id': anotacao_id}, options
+        session,
+        Anotacao,
+        {'id': anotacao_id},
+        ANOTACAO_LOAD_OPTIONS,  # Usando opções centralizadas
     )
 
     # O decorator handle_not_found já lida com o caso de anotação não
@@ -346,10 +353,29 @@ async def atualizar_anotacao(
         # Atualiza os campos da anotação
         anotacao.texto = anotacao_update.texto
         anotacao.data_atualizacao = datetime.now(timezone.utc)
+        # O commit será feito pelo session.begin() ao sair do bloco
 
-    # Carrega a anotação com as relações para retorno
-    await session.refresh(anotacao, ['endereco', 'usuario'])
-    return anotacao
+    # await session.refresh(
+    #     anotacao, ['endereco', 'usuario']
+    # )  # Removido refresh antigo
+
+    # Recarregar com todas as opções para garantir que o schema de resposta
+    # seja preenchido. É importante buscar pelo ID, pois 'anotacao' pode
+    # estar expirado após o commit se a sessão for fechada e reaberta
+    # pelo session.begin() em alguns cenários.
+    loaded_anotacao = await session.scalar(
+        select(Anotacao)
+        .options(*ANOTACAO_LOAD_OPTIONS)
+        .where(Anotacao.id == anotacao_id)
+    )
+    if not loaded_anotacao:
+        # Este caso não deveria acontecer se a anotação existia e o commit
+        # foi bem-sucedido
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro ao recarregar anotação após atualização.',
+        )
+    return loaded_anotacao
 
 
 @router.delete('/{anotacao_id}', status_code=status.HTTP_204_NO_CONTENT)
