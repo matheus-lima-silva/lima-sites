@@ -21,7 +21,7 @@ from lima.schemas import (
 )
 from lima.security import (
     create_access_token,
-    get_or_create_user,
+    get_or_create_user_by_telegram_id,  # Corrigido
 )
 
 from ..settings import settings  # Configurações da aplicação
@@ -38,37 +38,35 @@ async def login_for_access_token(
     # Esta rota é para login de usuário padrão com email/senha.
     # A função authenticate_user original precisaria ser adaptada ou
     # uma nova lógica de verificação de senha implementada aqui.
-    user = await get_or_create_user(
-        session=session, email=form_data.username, create_if_not_exists=False
-    )
+    # A função get_or_create_user_by_telegram_id espera 'telegram_user_id',
+    # e não 'email' como form_data.username provê.
 
-    if not user:
-        # ou se a senha não corresponder
-        #  (lógica de verificação de senha pendente)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Email ou senha incorretos',
-            headers={'WWW-Authenticate': 'Bearer'},
-        )
-
-    # TODO: Implementar a verificação de senha aqui. Exemplo:
-    # from lima.security import verify_password
-    # if not user.hashed_password or not
-    #  verify_password(form_data.password, user.hashed_password):
+    # Comentando a lógica que causa erro por enquanto e retornando 501.
+    # user = await get_or_create_user_by_telegram_id(
+    #     session=session,
+    #     telegram_user_id=form_data.username, # Isso não vai funcionar
+    #     name=None,
+    #     expected_phone=None # Precisa de um telefone esperado
+    # )
+    # if not user:
     #     raise HTTPException(
     #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="Email ou senha incorretos",
-    #         headers={"WWW-Authenticate": "Bearer"},
+    #         detail=\'Email ou senha incorretos\',
+    #         headers={\'WWW-Authenticate\': \'Bearer\'},
     #     )
+    # access_token = create_access_token(data={"user_id": user.id})
+    # return Token(access_token=access_token, token_type=\'bearer\')
 
-    access_token = create_access_token(user_id=user.id)
-    return Token(access_token=access_token, token_type='bearer')
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail='Login padrão não implementado para este fluxo.',
+    )
 
 
 @router.post('/telegram/register', response_model=Token)
 async def register_telegram_user_via_api(
     payload: TelegramUserRegistrationRequest,
-        # Alterado para receber o payload no corpo da requisição
+    # Alterado para receber o payload no corpo da requisição
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ):
     """
@@ -81,12 +79,11 @@ async def register_telegram_user_via_api(
             detail='telegram_user_id é obrigatório.',
         )
 
-    user_db = await get_or_create_user(
+    user_db = await get_or_create_user_by_telegram_id(  # Corrigido
         session=session,
         telegram_user_id=payload.telegram_user_id,
-        phone_number=payload.phone_number,  # Usar o phone_number do payload
-        name=payload.nome,  # Corrigido para payload.nome
-        create_if_not_exists=True,
+        expected_phone=payload.phone_number,  # Adicionado expected_phone
+        name=payload.nome,
     )
 
     if not user_db:
@@ -103,11 +100,17 @@ async def register_telegram_user_via_api(
     logger.info(
         f'Usuário Telegram registrado/logado via API: ID {user_db.id}, '
         f'TelegramID: {payload.telegram_user_id}, Nome: {
-            payload.nome or user_db.nome}'
-         # Corrigido para payload.nome
+            payload.nome or user_db.nome
+        }'
+        # Corrigido para payload.nome
     )
 
-    access_token = create_access_token(user_id=user_db.id)
+    access_token = create_access_token(
+        data={
+            'user_id': user_db.id,
+            'telegram_user_id': user_db.telegram_user_id,
+        }
+    )
     return Token(access_token=access_token, token_type='bearer')
 
 
@@ -197,13 +200,14 @@ async def telegram_webhook(
         raise HTTPException(
             status_code=500,
             detail=f'Erro interno ao processar atualização: {
-                type(e).__name__}',
+                type(e).__name__
+            }',
         )
 
-    return {
-        'status':
-          'atualização do telegram recebida e enfileirada para processamento'
-    }
+    status_message = (
+        'atualização do telegram recebida e enfileirada para processamento'
+    )
+    return {'status': status_message}
 
 
 # TODO: Verificar a necessidade e
