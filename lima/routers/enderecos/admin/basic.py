@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from ....database import get_async_session
 from ....models import (
     Alteracao,
+    Anotacao,
     BuscaLog,
     Detentora,
     Endereco,
@@ -204,7 +205,7 @@ async def obter_endereco(
             .where(Endereco.id == endereco_id)
             .options(
                 selectinload(Endereco.anotacoes).selectinload(
-                    Endereco.anotacoes.and_(Usuario)
+                    Anotacao.usuario
                 ),
                 selectinload(Endereco.alteracoes),
                 selectinload(Endereco.operadoras).selectinload(

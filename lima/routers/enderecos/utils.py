@@ -71,6 +71,7 @@ def endereco_to_schema(
                     id=eo.operadora.id,
                     codigo=eo.operadora.codigo,
                     nome=eo.operadora.nome,
+                    codigo_operadora=eo.codigo_operadora,  # Adicionado
                 )
                 for eo in endereco.operadoras
                 if eo.operadora is not None

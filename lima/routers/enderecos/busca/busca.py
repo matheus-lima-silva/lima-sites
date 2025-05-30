@@ -12,26 +12,24 @@ from sqlalchemy.orm import selectinload
 
 from ....database import get_async_session
 from ....models import (
-    Anotacao,  # Adicionado
+    Anotacao,
     BuscaLog,
     Detentora,
     Endereco,
     EnderecoOperadora,
-    NivelAcesso,  # Adicionada importação faltante
+    NivelAcesso,
     TipoBusca,
     Usuario,
 )
 from ....schemas import (
-    AnotacaoResumida,
-    AutorAnotacao,
-    DetentoraRead,
+    AnotacaoResumida,  # Adicionado
+    AutorAnotacao,  # Adicionado
+    DetentoraRead,  # Adicionado
     EnderecoRead,
     EnderecoReadComplete,
     OperadoraRead,
-    OperadoraSimples,
 )
 from ....security import get_current_user
-from ..utils import filtrar_anotacoes_por_acesso
 
 router = APIRouter()
 
@@ -53,85 +51,73 @@ LoadRelationsDep = Annotated[bool, Depends(load_relations_query)]
 
 async def _buscar_endereco(
     codigo_endereco: str, load_relations: bool, session: AsyncSession
-) -> Endereco:
+) -> Endereco | None:  # Alterado para retornar None se não encontrado
     """Helper function to query the endereco"""
+    query = select(Endereco).where(Endereco.codigo_endereco == codigo_endereco)
     if load_relations:
-        stmt = (
-            select(Endereco)
-            .where(Endereco.codigo_endereco == codigo_endereco)
-            .options(
-                selectinload(Endereco.operadoras).selectinload(
-                    EnderecoOperadora.operadora
-                ),
-                selectinload(Endereco.detentora),
-                selectinload(Endereco.alteracoes),
-                selectinload(Endereco.anotacoes).selectinload(
-                    Anotacao.usuario
-                ),
-            )
+        query = query.options(
+            selectinload(Endereco.operadoras).selectinload(
+                EnderecoOperadora.operadora
+            ),
+            selectinload(Endereco.detentora),
+            selectinload(Endereco.alteracoes),
+            selectinload(Endereco.anotacoes).selectinload(
+                Anotacao.usuario  # Eager load Usuario related to Anotacao
+            ),
         )
-    else:
-        stmt = select(Endereco).where(
-            Endereco.codigo_endereco == codigo_endereco
-        )
-
-    return await session.scalar(stmt)
+    return await session.scalar(query)
 
 
 async def _registrar_busca(
-    session: AsyncSession, usuario_id: int, codigo_endereco: str
+    session: AsyncSession,
+    usuario_id: int,
+    endpoint: str,
+    parametros: str,
+    tipo_busca: TipoBusca,
 ) -> None:
     """Helper function to register the search log"""
     busca_log = BuscaLog(
         usuario_id=usuario_id,
-        endpoint='/enderecos/codigo/{codigo}',
-        parametros=f'codigo={codigo_endereco}',
-        tipo_busca=TipoBusca.por_id,
+        endpoint=endpoint,
+        parametros=parametros,
+        tipo_busca=tipo_busca,
     )
     session.add(busca_log)
-    await session.commit()
+    # Commit é feito no final da rota principal para atomicidade
 
 
 async def _processar_anotacoes(
-    endereco: Endereco, current_user: Usuario, session: AsyncSession
+    endereco: Endereco, current_user: Usuario
 ) -> List[AnotacaoResumida]:
     """Helper function to process annotations"""
     anotacoes_resumidas = []
+    anotacoes_a_processar = endereco.anotacoes or []
 
     # Filtrar por nível de acesso
     if current_user.nivel_acesso == NivelAcesso.basico:
-        # Usuário básico só vê suas próprias anotações
         anotacoes_filtradas = [
-            a for a in endereco.anotacoes if a.id_usuario == current_user.id
+            a for a in anotacoes_a_processar if a.id_usuario == current_user.id
         ]
     else:
-        # Usuários privilegiados veem todas as anotações
-        anotacoes_filtradas = endereco.anotacoes
+        anotacoes_filtradas = anotacoes_a_processar
 
-    # Carregar os usuários relacionados às anotações
-    usuario_ids = [a.id_usuario for a in anotacoes_filtradas]
-    if usuario_ids:
-        usuarios = await session.execute(
-            select(Usuario).where(Usuario.id.in_(usuario_ids))
-        )
-        usuarios_dict = {u.id: u for u in usuarios.scalars().all()}
-
-        # Converter para o formato esperado em AnotacaoResumida
-        for a in anotacoes_filtradas:
-            usuario = usuarios_dict.get(a.id_usuario)
-            if usuario:
-                autor = AutorAnotacao(
-                    id=usuario.id,
-                    nome=usuario.nome or usuario.telefone,
-                )
-                anotacao_resumida = AnotacaoResumida(
-                    id=a.id,
-                    texto=a.texto,
-                    data_hora=a.data_criacao,
-                    autor=autor,
-                )
-                anotacoes_resumidas.append(anotacao_resumida)
-
+    for a in anotacoes_filtradas:
+        if a.usuario:  # Usuário deve estar pré-carregado
+            autor = AutorAnotacao(
+                id=a.usuario.id,
+                nome=a.usuario.nome or a.usuario.telefone,
+            )
+            anotacao_resumida = AnotacaoResumida(
+                id=a.id,
+                texto=a.texto,
+                data_hora=a.data_criacao,
+                autor=autor,
+            )
+            anotacoes_resumidas.append(anotacao_resumida)
+        # else:
+        #     logger.warning(
+        #         f"Anotação {a.id} sem usuário carregado."
+        #     )  # Opcional
     return anotacoes_resumidas
 
 
@@ -148,10 +134,13 @@ def _criar_endereco_basico(endereco: Endereco) -> EnderecoRead:
         numero=endereco.numero or '',
         complemento=endereco.complemento or '',
         cep=endereco.cep or '',
+        # Corrigido para usar getattr com None como padrão se o atributo
+        # não existir
         class_infra_fisica=getattr(endereco, 'class_infra_fisica', None),
         latitude=endereco.latitude,
         longitude=endereco.longitude,
-        compartilhado=False,  # Valor fixo para o campo problemático
+        # Corrigido para usar getattr com False como padrão
+        compartilhado=getattr(endereco, 'compartilhado', False),
     )
 
 
@@ -162,26 +151,12 @@ async def buscar_por_codigo(
     current_user: CurrentUserDep,
     load_relations: LoadRelationsDep,
 ) -> Union[EnderecoRead, EnderecoReadComplete]:
-    """
-    Busca um endereço pelo código único
-
-    * Requer autenticação
-    * O código do endereço é um identificador único por endereço
-    * Opcionalmente carrega dados relacionados como operadoras e detentora
-    * Registra a busca para fins de auditoria
-    * Retorna EnderecoReadComplete quando load_relations=True, caso contrário
-    * EnderecoRead
-    """
     logger = logging.getLogger(__name__)
-
     try:
-        # Log para depuração
-        logger.info(f'Buscando endereço com código: {codigo_endereco}')
         logger.info(
-            f'Usuário autenticado: {current_user.id} ({current_user.telefone})'
+            f'Buscando endereço: {codigo_endereco}, '
+            f'load_relations: {load_relations}'
         )
-
-        # Buscar o endereço
         endereco = await _buscar_endereco(
             codigo_endereco, load_relations, session
         )
@@ -190,81 +165,61 @@ async def buscar_por_codigo(
             logger.warning(f'Endereço não encontrado: {codigo_endereco}')
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"Endereço com código '{codigo_endereco}' não encontrado"
-                ),
+                detail=f"Endereço '{codigo_endereco}' não encontrado",
             )
 
-        # Log para depuração
-        logger.info(f'Endereço encontrado ID: {endereco.id}')
-
-        # Registrar a busca para auditoria
-        await _registrar_busca(session, current_user.id, codigo_endereco)
-
-        # Criar resposta de acordo com o tipo solicitado
-        if not load_relations:
-            return _criar_endereco_basico(endereco)
-
-        # Criar objeto completo com relações
-        result = EnderecoReadComplete(
-            **_criar_endereco_basico(endereco).dict(),
-            operadoras=[],
-            detentora=None,
-            anotacoes=[],
+        await _registrar_busca(
+            session,
+            current_user.id,
+            endpoint='/enderecos/por-codigo/{codigo_endereco}',
+            parametros=f'codigo_endereco={codigo_endereco},load_relations={load_relations}',
+            tipo_busca=TipoBusca.por_id,
         )
 
-        # Adicionar operadoras se disponíveis
-        if hasattr(endereco, 'operadoras') and endereco.operadoras:
+        if not load_relations:
+            response_data = _criar_endereco_basico(endereco)
+        else:
+            base_data = _criar_endereco_basico(endereco).model_dump()
             operadoras_list = []
-            for eo in endereco.operadoras:
-                if eo.operadora is not None:
-                    operadoras_list.append(
-                        OperadoraRead(
-                            id=eo.operadora.id,
-                            codigo=eo.operadora.codigo,
-                            nome=eo.operadora.nome,
+            if endereco.operadoras:
+                for eo in endereco.operadoras:
+                    if eo.operadora:
+                        operadoras_list.append(
+                            OperadoraRead.model_validate(eo.operadora)
                         )
-                    )
-            result.operadoras = operadoras_list
 
-        # Adicionar detentora se disponível
-        if hasattr(endereco, 'detentora') and endereco.detentora:
-            det = endereco.detentora
-            result.detentora = DetentoraRead(
-                id=det.id,
-                codigo=det.codigo,
-                nome=det.nome,
-                telefone_noc=det.telefone_noc,
+            detentora_data = None
+            if endereco.detentora:
+                detentora_data = DetentoraRead.model_validate(
+                    endereco.detentora
+                )
+
+            anotacoes_data = await _processar_anotacoes(endereco, current_user)
+
+            response_data = EnderecoReadComplete(
+                **base_data,
+                operadoras=operadoras_list,
+                detentora=detentora_data,
+                anotacoes=anotacoes_data,
             )
 
-        # Processar anotações
-        if hasattr(endereco, 'anotacoes') and endereco.anotacoes:
-            result.anotacoes = await _processar_anotacoes(
-                endereco, current_user, session
-            )
-
-        return result
+        await session.commit()  # Commit após todas as operações de DB
+        return response_data
 
     except AttributeError as e:
-        # Se houver erro ao acessar atributos do objeto desvinculado
-        logger.error(f'Erro ao acessar atributos: {str(e)}')
-        logger.error(f'Tipo de current_user: {type(current_user)}')
-
-        if hasattr(current_user, '__dict__'):
-            logger.error(f'Atributos disponíveis: {current_user.__dict__}')
-
+        logger.error(
+            f'Erro de atributo em buscar_por_codigo: {e}', exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Não foi possível identificar o usuário autenticado.',
+            detail='Erro ao processar dados do usuário.',
         )
     except Exception as e:
-        # Log para qualquer outro erro não previsto
-        logger.error(
-            f'Erro não tratado na busca por código: {str(e)}', exc_info=True
-        )
+        logger.error(f'Erro em buscar_por_codigo: {e}', exc_info=True)
+        await session.rollback()  # Rollback em caso de erro
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f'Erro ao processar a requisição: {str(e)}',
+            detail='Erro interno ao buscar endereço por código.',
         )
 
 
@@ -276,154 +231,102 @@ async def buscar_por_operadora(
     codigo_operadora: str,
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
-    skip: int = 0,
-    limit: int = 100,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
-    """
-    Lista endereços de uma operadora específica
-
-    * Requer autenticação
-    * Busca pelo código da operadora (usando ILIKE para correspondência parcial
-      insensível a maiúsculas/minúsculas)
-    * Os resultados são paginados
-    * Registra a busca para fins de auditoria
-    * Retorna as operadoras associadas a cada endereço apenas com código e nome
-    """
     logger = logging.getLogger(__name__)
-    logger.info(
-        f'Buscando endereços para operadora com código: {codigo_operadora}'
-    )
-
     try:
-        # Acesso direto ao ID é seguro pois current_user é um
-        # objeto desvinculado
-        usuario_id = current_user.id
-
-        # Consulta modificada - usando ILIKE para busca parcial do código
-        # insensível a maiúsculas/minúsculas
+        logger.info(
+            f'Buscando por operadora: {codigo_operadora}, '
+            f'skip: {skip}, limit: {limit}'
+        )
         stmt = (
             select(Endereco)
-            .join(EnderecoOperadora)
+            .join(Endereco.operadoras)
+            # Junta Endereco com EnderecoOperadora (através do relacionamento 'operadoras')
             .where(
                 EnderecoOperadora.codigo_operadora.ilike(
                     f'%{codigo_operadora}%'
                 )
-            )
+            )  # MODIFICADO AQUI
             .offset(skip)
             .limit(limit)
             .options(
                 selectinload(Endereco.operadoras).selectinload(
                     EnderecoOperadora.operadora
                 ),
+                # Mantemos o selectinload para carregar os dados da operadora
                 selectinload(Endereco.detentora),
                 selectinload(Endereco.anotacoes).selectinload(
                     Anotacao.usuario
                 ),
             )
+            .distinct()
         )
 
-        result = await session.scalars(stmt)
-        enderecos = list(result)
-        logger.info(f'Número de endereços encontrados: {len(enderecos)}')
+        db_result = await session.scalars(stmt)
+        enderecos = list(db_result.all())  # Usar .all() para obter a lista
 
-        # Registrar a busca para auditoria
-        busca_log = BuscaLog(
-            usuario_id=usuario_id,
-            endpoint='/enderecos/operadora/{codigo}',
-            parametros=f'codigo={codigo_operadora}',
+        await _registrar_busca(
+            session,
+            current_user.id,
+            endpoint='/enderecos/por-operadora/{codigo_operadora}',
+            parametros=f'codigo_operadora={codigo_operadora},skip={skip},limit={limit}',
             tipo_busca=TipoBusca.por_operadora,
         )
-        session.add(busca_log)
-        await session.commit()
 
-        # Precisamos processar manualmente os resultados para incluir
-        # o código_operadora
-        resultados = []
+        resultados_finais = []
+        for end_item in enderecos:
+            base_data = _criar_endereco_basico(end_item).model_dump()
+            operadoras_formatadas = []
+            if end_item.operadoras:
+                for eo in end_item.operadoras:
+                    if eo.operadora:  # Checa se operadora existe
+                        operadoras_formatadas.append(
+                            OperadoraRead(
+                                id=eo.operadora.id,
+                                codigo=eo.operadora.codigo,
+                                nome=eo.operadora.nome,
+                                codigo_operadora=eo.codigo_operadora,
+                            )
+                        )
 
-        for endereco in enderecos:
-            # Criar o objeto base de endereço
-            endereco_result = EnderecoReadComplete(
-                id=endereco.id,
-                codigo_endereco=endereco.codigo_endereco,
-                logradouro=endereco.logradouro,
-                bairro=endereco.bairro,
-                municipio=endereco.municipio,
-                uf=endereco.uf,
-                tipo=endereco.tipo,
-                numero=endereco.numero or '',
-                complemento=endereco.complemento or '',
-                cep=endereco.cep or '',
-                class_infra_fisica=getattr(
-                    endereco, 'class_infra_fisica', None
-                ),
-                latitude=endereco.latitude,
-                longitude=endereco.longitude,
-                compartilhado=getattr(endereco, 'compartilhado', False),
-                operadoras=[],
-                detentora=None,
-                anotacoes=[],
+            detentora_formatada = None
+            if end_item.detentora:
+                detentora_formatada = DetentoraRead.model_validate(
+                    end_item.detentora
+                )
+
+            anotacoes_formatadas = await _processar_anotacoes(
+                end_item, current_user
             )
 
-            # Adicionar operadoras com seus códigos específicos - usando
-            # apenas nome e codigo_operadora
-            if hasattr(endereco, 'operadoras') and endereco.operadoras:
-                operadoras_list = []
-                for eo in endereco.operadoras:
-                    if eo.operadora is not None:
-                        # Usando o modelo simplificado com apenas nome
-                        # e codigo_operadora
-                        op = OperadoraSimples(
-                            nome=eo.operadora.nome,
-                            codigo=eo.operadora.codigo,
-                            codigo_operadora=eo.codigo_operadora,
-                        )
-                        operadoras_list.append(op)
-                endereco_result.operadoras = operadoras_list
-
-            # Adicionar detentora se disponível
-            if hasattr(endereco, 'detentora') and endereco.detentora:
-                det = endereco.detentora
-                endereco_result.detentora = DetentoraRead(
-                    id=det.id,
-                    codigo=det.codigo,
-                    nome=det.nome,
-                    telefone_noc=det.telefone_noc,
+            resultados_finais.append(
+                EnderecoReadComplete(
+                    **base_data,
+                    operadoras=operadoras_formatadas,
+                    detentora=detentora_formatada,
+                    anotacoes=anotacoes_formatadas,
                 )
+            )
 
-            # Processar anotações se necessário
-            if hasattr(endereco, 'anotacoes') and endereco.anotacoes:
-                anotacoes_filtradas = await filtrar_anotacoes_por_acesso(
-                    endereco.anotacoes, current_user, session
-                )
-                anotacoes_resumidas = []
-
-                for a in anotacoes_filtradas:
-                    if hasattr(a, 'usuario') and a.usuario:
-                        autor = AutorAnotacao(
-                            id=a.usuario.id,
-                            nome=a.usuario.nome or a.usuario.telefone,
-                        )
-                        anotacao_resumida = AnotacaoResumida(
-                            id=a.id,
-                            texto=a.texto,
-                            data_hora=a.data_criacao,
-                            autor=autor,
-                        )
-                        anotacoes_resumidas.append(anotacao_resumida)
-
-                endereco_result.anotacoes = anotacoes_resumidas
-
-            resultados.append(endereco_result)
-
-        return resultados
+        await session.commit()
+        return resultados_finais
 
     except AttributeError as e:
-        # Se houver erro ao acessar atributos do objeto desvinculado
-        logger.error(f'Erro ao acessar atributos de current_user: {str(e)}')
-
+        logger.error(
+            f'Erro de atributo em buscar_por_operadora: {e}', exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Não foi possível identificar o usuário autenticado.',
+            detail='Erro ao processar dados do usuário.',
+        )
+    except Exception as e:
+        logger.error(f'Erro em buscar_por_operadora: {e}', exc_info=True)
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro interno ao buscar endereços por operadora.',
         )
 
 
@@ -434,57 +337,59 @@ async def buscar_por_detentora(
     codigo_detentora: str,
     session: AsyncSessionDep,
     current_user: CurrentUserDep,
-    skip: int = 0,
-    limit: int = 100,
+    skip: Annotated[int, Query(ge=0)] = 0,  # Corrigido aqui
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,  # Corrigido aqui
 ):
-    """
-    Lista endereços de uma detentora específica
-
-    * Requer autenticação
-    * Busca pelo código da detentora
-    * Os resultados são paginados
-    * Registra a busca para fins de auditoria
-    """
+    logger = logging.getLogger(__name__)
     try:
-        # Acesso direto ao ID é seguro pois current_user é um
-        # objeto desvinculado
-        usuario_id = current_user.id
-
+        logger.info(
+            f'Buscando por detentora: {codigo_detentora}, '
+            f'skip: {skip}, limit: {limit}'
+        )
+        # Não precisamos de selectinload aqui, pois EnderecoRead não usa
+        # operadoras ou anotações diretamente.
+        # Apenas o relacionamento com Detentora é necessário para o filtro.
         stmt = (
             select(Endereco)
-            .join(Detentora)
-            .where(Detentora.codigo == codigo_detentora)
+            .join(Endereco.detentora)  # Junção explícita com Detentora
+            .where(Detentora.codigo.ilike(f'%{codigo_detentora}%'))
             .offset(skip)
             .limit(limit)
-            .options(
-                selectinload(Endereco.operadoras).selectinload(
-                    EnderecoOperadora.operadora
-                ),
-                selectinload(Endereco.detentora),
-            )
+            .distinct()  # Evitar duplicatas de Endereco
         )
 
-        result = await session.scalars(stmt)
-        enderecos = list(result)
+        db_result = await session.scalars(stmt)
+        enderecos = list(db_result.all())  # Usar .all() para obter a lista
 
-        # Registrar a busca para auditoria
-        busca_log = BuscaLog(
-            usuario_id=usuario_id,
-            endpoint='/enderecos/detentora/{codigo}',
-            parametros=f'codigo={codigo_detentora}',
+        await _registrar_busca(
+            session,
+            current_user.id,
+            endpoint='/enderecos/por-detentora/{codigo_detentora}',
+            parametros=f'codigo_detentora={codigo_detentora},skip={skip},limit={limit}',
             tipo_busca=TipoBusca.por_detentora,
         )
-        session.add(busca_log)
-        await session.commit()
 
-        return enderecos
+        # Mapeia diretamente para EnderecoRead, pois não há campos complexos
+        # que exijam processamento adicional como em buscar_por_operadora
+        resultados_finais = [
+            _criar_endereco_basico(end_item) for end_item in enderecos
+        ]
+
+        await session.commit()
+        return resultados_finais
 
     except AttributeError as e:
-        # Se houver erro ao acessar atributos do objeto desvinculado
-        logger = logging.getLogger(__name__)
-        logger.error(f'Erro ao acessar atributos de current_user: {str(e)}')
-
+        logger.error(
+            f'Erro de atributo em buscar_por_detentora: {e}', exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Não foi possível identificar o usuário autenticado.',
+            detail='Erro ao processar dados do usuário.',
+        )
+    except Exception as e:
+        logger.error(f'Erro em buscar_por_detentora: {e}', exc_info=True)
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro interno ao buscar endereços por detentora.',
         )
