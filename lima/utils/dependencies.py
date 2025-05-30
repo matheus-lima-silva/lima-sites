@@ -5,13 +5,21 @@ Este módulo centraliza as dependências comuns usadas nos diferentes routers
 da aplicação, evitando duplicação de código.
 """
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import Depends, Path, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+# Importar USER_LOAD_OPTIONS de core.loading_options
+# Este import é necessário porque outros módulos (como security.py ou routers)
+# podem importar CurrentUserDep, etc., que dependem implicitamente de
+# USER_LOAD_OPTIONS estar disponível no escopo onde get_current_user é usado.
+# Mesmo que não seja usado DIRETAMENTE neste arquivo, ele é parte da
+# "interface" que este módulo de dependências provê.
+from ..core.loading_options import USER_LOAD_OPTIONS  # noqa: F401
 from ..database import get_async_session
-from ..models import Usuario
+from ..models import Usuario  # Apenas Usuario é necessário aqui diretamente
 from ..security import (
     get_current_user,
     require_intermediario,
@@ -20,6 +28,9 @@ from ..security import (
 
 # Dependências comuns do banco de dados
 AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
+
+# USER_LOAD_OPTIONS foi movido para core.loading_options.py
+# e é importado acima para garantir que esteja no contexto quando necessário.
 
 # Dependências de autenticação
 CurrentUserDep = Annotated[Usuario, Depends(get_current_user)]
@@ -52,17 +63,48 @@ def order_desc_query(
 
 # Adicionando a dependência NomeQueryDep que estava faltando
 def nome_query(
-    nome: str = Query(
-        ..., min_length=2, max_length=100, description='Nome do usuário'
+    nome: Optional[str] = Query(  # Alterado para Optional[str]
+        None,  # Alterado de ... para None
+        min_length=2,
+        max_length=100,
+        description='Nome do usuário (opcional)',
     ),
-) -> str:
+) -> Optional[str]:  # Alterado para Optional[str]
     return nome
 
 
 SkipQueryDep = Annotated[int, Depends(skip_query)]
 LimitQueryDep = Annotated[int, Depends(limit_query)]
 OrderDescQueryDep = Annotated[bool, Depends(order_desc_query)]
-NomeQueryDep = Annotated[str, Depends(nome_query)]
+NomeQueryDep = Annotated[Optional[str], Depends(nome_query)]
+# Alterado para Optional[str]
+
+
+# Dependência para o parâmetro de telefone
+def telefone_query(
+    telefone: Optional[str] = Query(
+        None,
+        description='Filtrar usuários por telefone (opcional)',
+        regex=r'^\\d{10,11}$',  # Exemplo de regex para validar telefone
+    ),
+) -> Optional[str]:
+    return telefone
+
+
+TelefoneQueryDep = Annotated[Optional[str], Depends(telefone_query)]
+
+
+# Agrupando dependências de filtro e paginação
+class ListarUsuariosParams(BaseModel):
+    skip: SkipQueryDep
+    limit: LimitQueryDep
+    nome: NomeQueryDep
+    telefone: TelefoneQueryDep
+
+
+ListarUsuariosParamsDep = Annotated[
+    ListarUsuariosParams, Depends(ListarUsuariosParams)
+]
 
 
 # Função útil para validar parâmetros de ordenação
