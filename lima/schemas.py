@@ -128,18 +128,28 @@ class WhatsAppWebhookPayload(BaseModel):
 
 # ---------- USUARIO ----------
 class UsuarioBase(BaseModel):
-    email: Optional[str] = Field(None, example="user@example.com")
+    email: Optional[str] = Field(None, example='user@example.com')
     telegram_user_id: Optional[int] = Field(None, example=123456789)
-    telefone: Optional[str] = Field(None, example="+5511999999999")
-    nome: Optional[str] = Field(None, example="Nome do Usuário")
+    telefone: Optional[str] = Field(None, example='+5511999999999')
+    nome: Optional[str] = Field(None, example='Nome do Usuário')
     nivel_acesso: NivelAcesso = NivelAcesso.basico
 
     @field_validator('telefone')
     @classmethod
     def check_telefone_format(cls, v: Optional[str]):
         if v is not None:
-            if v.startswith('telegram_') or v.startswith('whatsapp_'):
-                if v.startswith('telegram_'):
+            # Permitir formatos internos como 'telegram_xxx', 'whatsapp_xxx',
+            # ou '+telegram...'
+            is_telegram_internal = v.startswith('telegram_')
+            is_whatsapp_internal = v.startswith('whatsapp_')
+            is_plus_telegram_internal = v.startswith('+telegram')
+
+            if (
+                is_telegram_internal
+                or is_whatsapp_internal
+                or is_plus_telegram_internal
+            ):
+                if is_telegram_internal:
                     parts = v.split('_', 1)
                     # A constante representa o número esperado de partes
                     # após o split do identificador 'telegram_<ID>'.
@@ -149,11 +159,16 @@ class UsuarioBase(BaseModel):
                         or not parts[1].isdigit()
                     ):
                         # Quebra a string longa em duas para o linter
-                        error_msg_part1 = ""
-                        "Formato de telefone interno 'telegram_' inválido."
+                        error_msg_part1 = (
+                            "Formato de telefone interno 'telegram_' inválido."
+                        )
                         error_msg_part2 = " Deve ser 'telegram_<ID numérico>'."
                         raise ValueError(error_msg_part1 + error_msg_part2)
+                # Nenhuma validação adicional para 'whatsapp_' ou
+                # '+telegram...' por enquanto
                 return v
+            # Para outros formatos, aplicar a validação de número de
+            # telefone real
             return validate_phone_number(v)
         return v
 
@@ -172,51 +187,51 @@ class UsuarioBase(BaseModel):
 class UsuarioCreate(UsuarioBase):
     # Para criação via bot, telegram_user_id é essencial.
     telegram_user_id: int = Field(..., example=123456789)
-    nome: Optional[str] = Field(None, example="Nome do Usuário Bot")
+    nome: Optional[str] = Field(None, example='Nome do Usuário Bot')
     # email e telefone são opcionais na criação via bot,
     # podem ser atualizados depois pelo usuário.
-    email: Optional[str] = Field(None, example="botuser@example.com")
-    telefone: Optional[str] = Field(None, example="+telegram_123456789")
+    email: Optional[str] = Field(None, example='botuser@example.com')
+    telefone: Optional[str] = Field(None, example='+telegram_123456789')
     # nivel_acesso é herdado de UsuarioBase e tem default
 
 
 class UsuarioUpdate(UsuarioBase):
     # Todos os campos são opcionais na atualização
-    email: Optional[str] = Field(None, example="newuser@example.com")
+    email: Optional[str] = Field(None, example='newuser@example.com')
     telegram_user_id: Optional[int] = Field(None, example=987654321)
-    telefone: Optional[str] = Field(None, example="+5521988888888")
-    nome: Optional[str] = Field(None, example="Nome Atualizado")
+    telefone: Optional[str] = Field(None, example='+5521988888888')
+    nome: Optional[str] = Field(None, example='Nome Atualizado')
     nivel_acesso: Optional[NivelAcesso] = None
 
 
-class UsuarioPublic(UsuarioBase):
+# Schemas resumidos para AnotacaoRead
+class UsuarioResumidoParaAnotacao(BaseModel):
     id: int
-    # Os campos abaixo parecem pertencer a Endereco, não Usuario.
-    # Mantendo por ora, mas idealmente deveriam estar em um
-    # schema de Endereco associado.
-    # cep: Optional[str] = Field(None, example='01310-100')
-    # class_infra_fisica: Optional[str] = Field(None, example='Fibra')
-    # latitude: Optional[float] = Field(None, example=-23.5558)
-    # longitude: Optional[float] = Field(None, example=-46.6396)
-    # compartilhado: Optional[bool] = Field(False, example=True)
+    nome: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
-    # Validadores de Endereco não devem estar em UsuarioPublic
-    # @field_validator('codigo_endereco')
-    # @classmethod
-    # def validate_codigo_endereco(cls, v):
-    #     return validate_codigo_endereco(v)
 
-    # @field_validator('uf')
-    # @classmethod
-    # def validate_uf(cls, v):
-    #     return validate_uf(v)
+class EnderecoResumidoParaAnotacao(BaseModel):
+    id: int
+    codigo_endereco: str
+    municipio: Optional[str] = None
+    uf: Optional[str] = None
 
-    # @field_validator('cep')
-    # @classmethod
-    # def validate_cep(cls, v):
-    #     return validate_cep(v)
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AnotacaoRead(BaseModel):  # Modificado para ter relações explícitas
+    id: int
+    texto: str
+    data_criacao: datetime
+    data_atualizacao: datetime
+    id_endereco: int  # Mantido para referência direta, se necessário
+    id_usuario: int  # Mantido para referência direta, se necessário
+    usuario: UsuarioResumidoParaAnotacao
+    endereco: EnderecoResumidoParaAnotacao
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------- ENDERECO ----------
@@ -333,6 +348,7 @@ class BuscaCreate(BuscaBase):
 
 class BuscaRead(BuscaBase, BaseEntitySchema):
     data_busca: datetime
+    endereco: EnderecoResumidoParaAnotacao  # Adicionado
 
 
 # ---------- SUGESTAO ----------
@@ -350,6 +366,7 @@ class SugestaoCreate(SugestaoBase):
 class SugestaoRead(SugestaoBase, BaseEntitySchema):
     data_sugestao: datetime
     status: StatusSugestao
+    endereco: Optional[EnderecoResumidoParaAnotacao] = None  # Adicionado
 
 
 # ---------- ALTERACAO ----------
@@ -366,6 +383,7 @@ class AlteracaoCreate(AlteracaoBase):
 
 class AlteracaoRead(AlteracaoBase, BaseEntitySchema):
     data_alteracao: datetime
+    endereco: EnderecoResumidoParaAnotacao  # Adicionado
 
 
 # ---------- ANOTACAO ----------
@@ -384,41 +402,10 @@ class AnotacaoUpdate(BaseModel):
     texto: str = Field(..., example='Endereço verificado pessoalmente')
 
 
-# Schemas resumidos para AnotacaoRead
-
-class UsuarioResumidoParaAnotacao(BaseModel):
-    id: int
-    nome: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class EnderecoResumidoParaAnotacao(BaseModel):
-    id: int
-    codigo_endereco: str
-    municipio: Optional[str] = None
-    uf: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class AnotacaoRead(BaseModel):  # Modificado para ter relações explícitas
-    id: int
-    texto: str
-    data_criacao: datetime
-    data_atualizacao: datetime
-    id_endereco: int  # Mantido para referência direta, se necessário
-    id_usuario: int  # Mantido para referência direta, se necessário
-    usuario: UsuarioResumidoParaAnotacao
-    endereco: EnderecoResumidoParaAnotacao
-
-    model_config = ConfigDict(from_attributes=True)
-
-
 # ---------- ANOTACAO RESUMIDA (para exibição em endpoints de endereços) -----
 class AutorAnotacao(BaseModel):
     id: int
-    nome: str
+    nome: str  # Nome deve existir no contexto de autor
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -443,6 +430,8 @@ class OperadoraCreate(BaseModel):
         ..., example='684498219.0', description='Código externo da operadora'
     )
     nome: str = Field(..., example='Operadora A')
+    # Adicionado para que possa ser usado em EnderecoCreate
+    codigo: Optional[str] = Field(None, example='OP001')
 
 
 class OperadoraRead(OperadoraBase, BaseEntitySchema):
@@ -498,6 +487,8 @@ class DetentoraCreate(BaseModel):
     )
     nome: str = Field(..., example='Detentora A')
     telefone_noc: str = Field(..., example='+551199999999')
+    # Adicionado para que possa ser usado em EnderecoCreate
+    codigo: Optional[str] = Field(None, example='DET-001')
 
     # Adicionando validadores também para DetentoraCreate
     @field_validator('telefone_noc')
@@ -528,9 +519,50 @@ class BuscaLogCreate(BuscaLogBase):
     pass
 
 
+# Schema para BuscaLog quando aninhado em UsuarioPublic
+class BuscaLogAninhadoComIdRead(BaseModel):
+    id: int  # ID do próprio log
+    endpoint: str
+    parametros: str
+    tipo_busca: TipoBusca
+    data_hora: datetime  # Corresponde ao models.BuscaLog.data_hora
+    # Não incluir 'usuario' aqui para evitar recursão e porque é implícito
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Schema principal para BuscaLog (ex: para um endpoint /buscalogs/)
 class BuscaLogRead(BuscaLogBase, BaseEntitySchema):
-    data_busca: datetime
-    usuario: Optional[UsuarioPublic] = None  # Adicionado para contexto
+    # Herda id (do log) e id_usuario de BaseEntitySchema e BuscaLogBase
+    data_hora: datetime  # Corrigido de data_busca para data_hora
+    usuario: Optional[UsuarioResumidoParaAnotacao] = (
+        None  # Corrigido para evitar recursão
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Novo schema UsuarioPublicMinimo
+class UsuarioPublicMinimo(UsuarioBase):
+    id: int
+    created_at: datetime
+    last_seen: datetime
+    # Não inclui anotacoes, buscas, sugestoes, alteracoes, busca_logs
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Atualizar UsuarioPublic para incluir relacionamentos e campos de data
+class UsuarioPublic(UsuarioBase):
+    id: int
+    created_at: datetime
+    last_seen: datetime
+
+    anotacoes: List[AnotacaoRead] = Field(default_factory=list)
+    buscas: List[BuscaRead] = Field(default_factory=list)
+    sugestoes: List[SugestaoRead] = Field(default_factory=list)
+    alteracoes: List[AlteracaoRead] = Field(default_factory=list)
+    busca_logs: List[BuscaLogAninhadoComIdRead] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -540,6 +572,65 @@ class TelegramUserRegistrationRequest(BaseModel):
     telegram_user_id: int
     nome: Optional[str] = None  # Alterado de 'name' para 'nome'
     phone_number: Optional[str] = None  # Adicionado explicitamente
+
+
+# === SCHEMAS PARA ESTADOS DE CONVERSAÇÃO DO BOT ===
+
+
+class ConversationStateBase(BaseModel):
+    """Schema base para estados de conversação"""
+
+    user_id: Optional[int] = Field(
+        None, description='ID do usuário no Telegram'
+    )
+    chat_id: Optional[int] = Field(None, description='ID do chat no Telegram')
+    data_type: str = Field(
+        ...,
+        description='Tipo: user_data, chat_data, bot_data,'
+        ' conversation, callback_data',
+    )
+    conversation_name: Optional[str] = Field(
+        None, description='Nome da conversação/handler'
+    )
+    state: Optional[str] = Field(
+        None, description='Estado atual da conversação'
+    )
+    data: str = Field(default='{}', description='Dados serializados em JSON')
+
+
+class ConversationStateCreate(ConversationStateBase):
+    """Schema para criação de estado de conversação"""
+
+    pass
+
+
+class ConversationStateUpdate(BaseModel):
+    """Schema para atualização de estado de conversação"""
+
+    state: Optional[str] = None
+    data: Optional[str] = None
+    data_type: Optional[str] = None
+
+
+class ConversationStateResponse(ConversationStateBase):
+    """Schema de resposta para estado de conversação"""
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ConversationStateQuery(BaseModel):
+    """Schema para consulta de estados de conversação"""
+
+    user_id: Optional[int] = None
+    chat_id: Optional[int] = None
+    conversation_name: Optional[str] = None
+
+
+# === FIM DOS SCHEMAS DE CONVERSAÇÃO ===
 
 # Atualizar referências tardias para Pydantic v2
 # Isso é feito automaticamente pelo Pydantic, mas para clareza,

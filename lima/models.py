@@ -1,7 +1,14 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import BigInteger, ForeignKey, func
+from sqlalchemy import (
+    BigInteger,
+    DateTime,  # Adicionado DateTime
+    ForeignKey,
+    Index,  # Adicionado Index
+    Text,  # Adicionado para armazenar JSON
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, registry, relationship
 
 from .database import utcnow
@@ -82,10 +89,10 @@ class Usuario:
     )
     nome: Mapped[str | None] = mapped_column(default=None)
     created_at: Mapped[datetime] = mapped_column(
-        init=False, server_default=func.now()
+        DateTime(timezone=True), init=False, server_default=func.now()
     )
     last_seen: Mapped[datetime] = mapped_column(
-        init=False, server_default=func.now()
+        DateTime(timezone=True), init=False, server_default=func.now()
     )
 
     buscas: Mapped[list['Busca']] = relationship(
@@ -306,4 +313,88 @@ class EnderecoOperadora:
     )
     operadora: Mapped['Operadora'] = relationship(
         init=False, back_populates='enderecos', lazy='selectin'
+    )
+
+
+@table_registry.mapped_as_dataclass
+class ConversationState:
+    """
+    Modelo para persistir estados de conversação do bot Telegram.
+
+    Substitui o PicklePersistence, oferecendo melhor escalabilidade,
+    consistência e auditoria para estados de conversação. Armazena:
+    - Estados de conversação por handler
+    - Dados do usuário (user_data)
+    - Dados do chat (chat_data)
+    - Dados do bot (bot_data)
+    - Callbacks aguardando resposta
+    """
+
+    __tablename__ = 'conversation_states'
+
+    # Chave primária
+    id: Mapped[int] = mapped_column(init=False, primary_key=True)
+
+    # Identificadores únicos - Compatível com PTB
+    user_id: Mapped[int | None] = mapped_column(
+        BigInteger, index=True, nullable=True
+    )  # PTB user_id
+    chat_id: Mapped[int | None] = mapped_column(
+        BigInteger, index=True, nullable=True
+    )  # PTB chat_id
+
+    # Tipo de dados persistidos
+    data_type: Mapped[str] = mapped_column(
+        index=True,
+        comment='Tipo: user_data, chat_data, bot_data,'
+        ' conversation, callback_data',
+    )
+
+    # Nome da conversação (para conversation handlers)
+    conversation_name: Mapped[str | None] = mapped_column(
+        nullable=True, index=True, comment='Nome do ConversationHandler'
+    )
+
+    # Estado da conversação (para conversation handlers)
+    state: Mapped[str | None] = mapped_column(
+        nullable=True, comment='Estado atual da conversação'
+    )
+
+    # Dados serializados em JSON
+    data: Mapped[str] = mapped_column(
+        Text, comment='Dados serializados em JSON'
+    )
+
+    # Timestamps para auditoria
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), init=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        init=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    # Índices compostos para buscas eficientes
+    __table_args__ = (
+        # Índice para buscar por tipo de dados
+        Index('ix_conversation_states_data_type', 'data_type'),
+        # Índice para buscar conversações específicas
+        Index(
+            'ix_conversation_states_conversation',
+            'conversation_name',
+            'user_id',
+            'chat_id',
+        ),
+        # Índice para buscar dados de usuário/chat
+        Index(
+            'ix_conversation_states_user_chat',
+            'user_id',
+            'chat_id',
+            'data_type',
+        ),
+        {
+            'comment': 'Estados de conversação do bot Telegram - Compatível com PTB'
+        },
     )
