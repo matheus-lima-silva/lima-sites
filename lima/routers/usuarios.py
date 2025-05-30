@@ -3,31 +3,42 @@ import logging
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from ..models import NivelAcesso, Usuario
+from ..core.loading_options import (
+    USER_LOAD_OPTIONS,
+    USER_LOAD_OPTIONS_MINIMAL,
+)
+from ..models import Usuario
 from ..schemas import (
+    NivelAcesso,
     UsuarioCreate,
     UsuarioPublic,
-)  # Alterado de UsuarioRead para UsuarioPublic
+    UsuarioPublicMinimo,
+)
 from ..utils.dependencies import (
     AsyncSessionDep,
     CurrentUserDep,
     IdPathDep,
     IntermediarioUserDep,
-    NomeQueryDep,
+    ListarUsuariosParamsDep,
 )
 from ..utils.permissions import verificar_permissao_basica
 
-# Configuração de logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/usuarios', tags=['Usuários'])
 
 
-# Função utilitária para validação
-async def get_usuario_or_404(session, usuario_id: int) -> Usuario:
-    """Busca um usuário pelo ID ou lança 404 se não existir"""
+async def get_usuario_or_404(
+    session: AsyncSessionDep, usuario_id: int
+) -> Usuario:
+    """Busca um usuário pelo ID ou lança 404 se não existir."""
     usuario = await session.scalar(
-        select(Usuario).where(Usuario.id == usuario_id)
+        select(Usuario)
+        .options(
+            *USER_LOAD_OPTIONS
+            # Aplicando as opções de carregamento centralizadas
+        )
+        .where(Usuario.id == usuario_id)
     )
     if not usuario:
         logger.info(f'Usuário não encontrado: {usuario_id}')
@@ -39,22 +50,17 @@ async def get_usuario_or_404(session, usuario_id: int) -> Usuario:
 
 
 @router.post(
-    '/',
-    response_model=UsuarioPublic,
-    # Alterado de UsuarioRead para UsuarioPublic
-    status_code=status.HTTP_201_CREATED,
+    '/', response_model=UsuarioPublic, status_code=status.HTTP_201_CREATED
 )
 async def criar_usuario(
     usuario: UsuarioCreate,
     session: AsyncSessionDep,
     current_user: IntermediarioUserDep,
 ):
-    """Cria um novo usuário no sistema"""
-    # Verifica se o telefone já está em uso
+    """Cria um novo usuário no sistema."""
     existing_user = await session.scalar(
         select(Usuario).where(Usuario.telefone == usuario.telefone)
     )
-
     if existing_user:
         logger.warning(
             f'Telefone já existente: {usuario.telefone} por {current_user.id}'
@@ -63,192 +69,138 @@ async def criar_usuario(
             status_code=status.HTTP_409_CONFLICT,
             detail='Usuário com este telefone já existe',
         )
-
-    # Cria um novo usuário com nível básico
     novo_usuario = Usuario(
         telefone=usuario.telefone,
         nome=usuario.nome,
         nivel_acesso=NivelAcesso.basico,
     )
-
     session.add(novo_usuario)
     await session.commit()
-    await session.refresh(novo_usuario)
+    await session.refresh(novo_usuario, attribute_names=['id'])
 
-    logger.info(f'Novo usuário: {novo_usuario.id} por {current_user.id}')
+    db_usuario = await session.scalar(
+        select(Usuario)
+        .options(
+            *USER_LOAD_OPTIONS
+            # Aplicando as opções de carregamento centralizadas
+        )
+        .where(Usuario.id == novo_usuario.id)
+    )
 
-    return UsuarioPublic.model_validate(
-        novo_usuario
-    )  # Alterado de UsuarioRead para UsuarioPublic
+    if not db_usuario:
+        logger.error(
+            f"""Usuário recém-criado com ID {novo_usuario.id} não encontrado
+            após commit."""
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='Erro ao recuperar usuário após criação.',
+        )
+
+    logger.info(f'Novo usuário: {db_usuario.id} por {current_user.id}')
+    return UsuarioPublic.model_validate(db_usuario)
 
 
 @router.get(
-    '/me', response_model=UsuarioPublic
-)  # Alterado de UsuarioRead para UsuarioPublic
+    '/me', response_model=UsuarioPublicMinimo
+)  # Alterado para UsuarioPublicMinimo
 async def ler_usuario_atual(
-    current_user: CurrentUserDep,
-    session: AsyncSessionDep,
+    session: AsyncSessionDep, current_user: CurrentUserDep
 ):
-    """Retorna informações do usuário autenticado"""
-    try:
-        if not hasattr(current_user, 'id') or current_user.id is None:
-            logger.warning(
-                f'Objeto current_user sem ID. Tipo: {type(current_user)}'
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail='Usuário não autenticado corretamente',
-            )
-        # Retorna o schema Pydantic diretamente
-        return UsuarioPublic.model_validate(
-            current_user
-        )  # Alterado de UsuarioRead para UsuarioPublic
-    except Exception as e:
-        logger.warning(f'Erro ao acessar current_user: {str(e)}')
-        try:
-            if hasattr(current_user, 'telefone') and current_user.telefone:
-                telefone = current_user.telefone
-                logger.info(
-                    f'Tentando recuperar usuário pelo telefone: {telefone}'
-                )
-                stmt = select(Usuario).where(Usuario.telefone == telefone)
-                result = await session.execute(stmt)
-                usuario = result.scalar_one_or_none()
-                if usuario:
-                    return UsuarioPublic.model_validate(
-                        usuario
-                    )  # Alterado de UsuarioRead para UsuarioPublic
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=(
-                    'Não foi possível identificar o usuário. '
-                    'Por favor, refaça o login.'
-                ),
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f'Erro ao tentar recuperação alternativa: {str(e)}')
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    'Erro ao processar a requisição. '
-                    'Por favor, tente novamente.'
-                ),
-            )
+    """Retorna informações do usuário autenticado."""
+    # A validação/serialização para UsuarioPublicMinimo ocorrerá
+    # automaticamente.
+    # A otimização do carregamento de current_user será feita em security.py.
+    return current_user
 
 
 @router.get(
-    '/{usuario_id}',
-    response_model=UsuarioPublic,  # Alterado de UsuarioRead para UsuarioPublic
-)
+    '/', response_model=list[UsuarioPublicMinimo]
+)  # Alterado para list[UsuarioPublicMinimo]
+async def listar_usuarios(
+    session: AsyncSessionDep,
+    current_user: IntermediarioUserDep,
+    params: ListarUsuariosParamsDep,  # Usar a dependência agrupada
+):
+    """Lista todos os usuários do sistema."""
+    query = select(Usuario).order_by(Usuario.id)
+    if params.nome:  # Acessar via params
+        query = query.where(Usuario.nome.ilike(f'%{params.nome}%'))
+    if params.telefone:  # Acessar via params
+        query = query.where(Usuario.telefone == params.telefone)
+
+    # Aplicar offset e limit depois de todas as condições where
+    query = query.offset(params.skip).limit(params.limit)  # Acessar via params
+
+    # Aplicar USER_LOAD_OPTIONS_MINIMAL
+    # Alterado para USER_LOAD_OPTIONS_MINIMAL
+    query = query.options(*USER_LOAD_OPTIONS_MINIMAL)
+
+    result = await session.execute(query)
+    usuarios = result.scalars().all()
+    logger.info(f'Listando usuários: {len(usuarios)} por {current_user.id}')
+    # Alterado para UsuarioPublicMinimo
+    return [UsuarioPublicMinimo.model_validate(u) for u in usuarios]
+
+
+@router.get('/{usuario_id}', response_model=UsuarioPublic)
 async def obter_usuario(
     session: AsyncSessionDep,
     usuario_id: IdPathDep,
     current_user: CurrentUserDep,
+    # Alterado para CurrentUserDep para consistência
 ):
-    """Retorna informações sobre um usuário específico"""
-    # Acesso simplificado aos atributos do usuário atual (objeto desvinculado)
-    try:
-        # Verificação de permissão usando a função centralizada
-        verificar_permissao_basica(current_user, usuario_id, 'usuário')
+    """Obtém um usuário específico pelo ID."""
+    # Verificar permissão: usuário pode ver a si mesmo
+    #  ou ser intermediário/super
+    verificar_permissao_basica(current_user, usuario_id)
 
-        # Buscar usuário
-        stmt = select(Usuario).where(Usuario.id == usuario_id)
-        result = await session.execute(stmt)
-        usuario = result.scalar_one_or_none()
-
-        if not usuario:
-            logger.info(f'Usuário não encontrado: {usuario_id}')
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Usuário não encontrado',
-            )
-
-        return UsuarioPublic.model_validate(
-            usuario
-        )  # Alterado de UsuarioRead para UsuarioPublic
-
-    except AttributeError as e:
-        # Caso haja problema ao acessar os atributos
-        logger.warning(f'Erro ao acessar atributos de current_user: {str(e)}')
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Usuário não autenticado corretamente',
-        )
+    db_usuario = await get_usuario_or_404(session, usuario_id)
+    logger.info(f'Obtendo usuário: {usuario_id} por {current_user.id}')
+    return UsuarioPublic.model_validate(db_usuario)
 
 
-@router.put(
-    '/{usuario_id}/nome', response_model=UsuarioPublic
-)  # Alterado de UsuarioRead para UsuarioPublic
-async def atualizar_nome_usuario(
+@router.put('/{usuario_id}', response_model=UsuarioPublic)
+async def atualizar_usuario(
     usuario_id: IdPathDep,
-    nome: NomeQueryDep,
+    usuario_update_data: UsuarioCreate,
+    # Usando UsuarioCreate para simplicidade
     session: AsyncSessionDep,
-    current_user: CurrentUserDep,
+    current_user: IntermediarioUserDep,
+    # Apenas intermediários ou superiores podem atualizar
 ):
-    """Atualiza o nome de um usuário"""
-    # Acesso simplificado aos atributos do usuário atual (objeto desvinculado)
-    try:
-        # Verificação de permissão usando a função centralizada
-        verificar_permissao_basica(current_user, usuario_id, 'usuário')
+    """Atualiza um usuário existente."""
+    db_usuario = await get_usuario_or_404(session, usuario_id)
 
-        # Buscar usuário que terá o nome atualizado
-        stmt = select(Usuario).where(Usuario.id == usuario_id)
-        result = await session.execute(stmt)
-        usuario = result.scalar_one_or_none()
-
-        if not usuario:
-            logger.info(f'Usuário não encontrado: {usuario_id}')
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail='Usuário não encontrado',
+    # Verificar se o telefone está sendo alterado para um já existente
+    if (
+        usuario_update_data.telefone
+        and usuario_update_data.telefone != db_usuario.telefone
+    ):
+        existing_user = await session.scalar(
+            select(Usuario).where(
+                Usuario.telefone == usuario_update_data.telefone
             )
-
-        # Registra a alteração para fins de auditoria
-        logger.info(
-            f"Nome alterado: {usuario.id} de '{usuario.nome or 'None'}' "
-            f"para '{nome}' por {current_user.id}"
         )
+        if existing_user and existing_user.id != usuario_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail='Telefone já cadastrado para outro usuário.',
+            )
+        db_usuario.telefone = usuario_update_data.telefone
 
-        # Atualiza o nome
-        usuario.nome = nome
-        await session.commit()
-        await session.refresh(usuario)
+    if usuario_update_data.nome is not None:
+        db_usuario.nome = usuario_update_data.nome
+    # Nivel de acesso não é atualizado por este endpoint para manter segurança
+    # db_usuario.nivel_acesso = usuario_update_data.nivel_acesso
 
-        return UsuarioPublic.model_validate(
-            usuario
-        )  # Alterado de UsuarioRead para UsuarioPublic
+    await session.commit()
+    await session.refresh(db_usuario)
 
-    except AttributeError as e:
-        # Caso haja problema ao acessar os atributos
-        logger.warning(f'Erro ao acessar atributos de current_user: {str(e)}')
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Usuário não autenticado corretamente',
-        )
+    # Re-buscar com load options para garantir que a resposta está completa
+    # Isso é importante se UsuarioPublic evoluir para incluir mais relações
+    # que não são atualizadas diretamente aqui mas são parte do modelo.
+    updated_db_usuario = await get_usuario_or_404(session, db_usuario.id)
 
-
-@router.get(
-    '/', response_model=UsuarioPublic
-)  # Alterado de UsuarioRead para UsuarioPublic
-async def obter_usuario_por_telefone(
-    telefone: str,
-    session: AsyncSessionDep,
-    # current_user: CurrentUserDep, # Removido para permitir acesso interno
-):
-    """Retorna informações do usuário pelo telefone.
-    Usado pelo bot Telegram.
-    """
-    usuario = await session.scalar(
-        select(Usuario).where(Usuario.telefone == telefone)
-    )
-    if not usuario:
-        logger.info(f'Usuário não encontrado para telefone: {telefone}')
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Usuário não encontrado',
-        )
-    return UsuarioPublic.model_validate(
-        usuario
-    )  # Alterado de UsuarioRead para UsuarioPublic
+    logger.info(f'Usuário atualizado: {usuario_id} por {current_user.id}')
+    return UsuarioPublic.model_validate(updated_db_usuario)
