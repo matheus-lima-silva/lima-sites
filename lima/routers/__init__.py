@@ -3,6 +3,7 @@
 from .alteracoes import router as alteracoes_router
 from .anotacoes import router as anotacoes_router
 from .auth import router as auth_router
+from .bot_conversations import router as bot_conversations_router
 from .buscas import router as buscas_router
 from .enderecos import router as enderecos_router
 from .sugestoes import router as sugestoes_router
@@ -18,4 +19,5 @@ __all__ = [
     'sugestoes_router',
     'alteracoes_router',
     'anotacoes_router',
+    'bot_conversations_router',
 ]

@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from .routers import (
     alteracoes_router,
     anotacoes_router,
     auth_router,
+    bot_conversations_router,
     buscas_router,
     sugestoes_router,
     usuarios_admin_router,
@@ -37,6 +39,10 @@ async def lifespan(app: FastAPI):
         # Iniciar o scheduler de tarefas agendadas
         iniciar_tarefas_agendadas()
         print('✅ Scheduler de tarefas agendadas iniciado com sucesso!')
+
+        # Aguardar um pouco para garantir que a API esteja totalmente pronta
+        await asyncio.sleep(2)
+        print('⏳ Aguardando API estar pronta...')
 
         # Inicializar handlers do Telegram
         await inicializar_handlers_telegram()  # Adicionar await
@@ -87,6 +93,7 @@ app.include_router(buscas_router)
 app.include_router(sugestoes_router)
 app.include_router(alteracoes_router)
 app.include_router(anotacoes_router)
+app.include_router(bot_conversations_router)
 
 # Montar a sub-aplicação de endereços
 app.mount('/enderecos', enderecos_app)
