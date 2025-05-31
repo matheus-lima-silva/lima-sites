@@ -892,6 +892,7 @@ handler_busca_rapida = ConversationHandler(
             iniciar_busca_rapida, pattern='^nova_busca_rapida$'
         ),
     ],
+    per_message=True,
     states={
         SELECIONANDO_TIPO_CODIGO: [
             CallbackQueryHandler(

@@ -1,5 +1,24 @@
 """
-Router para gerenciamento de estados de conversação do bot Telegram.
+Router para gerenciamento de estados de conversação do bot T@router.get
+('/', response_model=List[ConversationStateResp@rout@router.delete
+('/by-conversation/')
+async def delete_conversation_state_by_key(
+    user_id: int,
+    chat_id: int,
+    conversation_name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):te('/by-conversation/')
+async def delete_conversation_state_by_key(
+    user_id: int,
+    chat_id: int,
+    conversation_name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):async def get_conversation_states(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: Optional[int] = None,
+    chat_id: Optional[int] = None,
+    conversation_name: Optional[str] = None,
+):.
 
 Este módulo fornece endpoints para persistir e recuperar estados
 de conversações do bot, permitindo que o bot seja stateless e
@@ -64,10 +83,10 @@ async def create_conversation_state(
 
 @router.get('/', response_model=List[ConversationStateResponse])
 async def get_conversation_states(
-    user_id: Annotated[Optional[int], Query(None)],
-    chat_id: Annotated[Optional[int], Query(None)],
-    conversation_name: Annotated[Optional[str], Query(None)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: Annotated[Optional[int], Query()] = None,
+    chat_id: Annotated[Optional[int], Query()] = None,
+    conversation_name: Annotated[Optional[str], Query()] = None,
 ):
     """
     Buscar estados de conversação com filtros opcionais.
@@ -116,10 +135,10 @@ async def get_conversation_state(
 
 @router.get('/by-conversation/')
 async def get_conversation_state_by_key(
-    user_id: Annotated[int, Query(...)],
-    chat_id: Annotated[int, Query(...)],
-    conversation_name: Annotated[str, Query(...)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: int,
+    chat_id: int,
+    conversation_name: str,
 ):
     """
     Buscar estado específico pela chave única
@@ -174,9 +193,9 @@ async def update_conversation_state(
 
 @router.put('/by-conversation/')
 async def update_conversation_state_by_key(
-    user_id: Annotated[int, Query(...)],
-    chat_id: Annotated[int, Query(...)],
-    conversation_name: Annotated[str, Query(...)],
+    user_id: int,
+    chat_id: int,
+    conversation_name: str,
     state_update: ConversationStateUpdate,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
@@ -234,9 +253,9 @@ async def delete_conversation_state(
 
 @router.delete('/by-conversation/')
 async def delete_conversation_state_by_key(
-    user_id: Annotated[int, Query(...)],
-    chat_id: Annotated[int, Query(...)],
-    conversation_name: Annotated[str, Query(...)],
+    user_id: int,
+    chat_id: int,
+    conversation_name: str,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """
