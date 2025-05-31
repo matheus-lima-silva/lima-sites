@@ -4,7 +4,7 @@ Handlers para comandos de anotação.
 
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     CallbackQueryHandler,  # Movido para o topo
@@ -15,7 +15,11 @@ from telegram.ext import (
     filters,  # Movido para o topo
 )
 
-from ..formatters import escape_markdown, formatar_endereco
+from lima.bot.handlers.menu import exibir_menu_principal
+from lima.schemas import AnotacaoRead  # Importa o schema Pydantic
+
+from ..formatters.base import escape_markdown
+from ..formatters.endereco import formatar_endereco
 from ..keyboards import (
     criar_teclado_confirma_cancelar,
     teclado_endereco_nao_encontrado_criar,  # Adicionado
@@ -26,11 +30,132 @@ from ..services.endereco import (  # Adicionado FiltrosEndereco
     FiltrosEndereco,
     buscar_endereco,
 )
+from .busca_codigo import iniciar_busca_rapida
 
 logger = logging.getLogger(__name__)
 
 # Estados para a conversa de anotação
 ID_ENDERECO, TEXTO, CONFIRMAR = range(3)
+
+
+async def iniciar_anotacao_por_id(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, endereco_id: str
+) -> int:
+    """
+    Inicia o fluxo de anotação com o ID do endereço já conhecido.
+    Usado quando vem do sistema de exploração da base.
+
+    Args:
+        update: Update do Telegram
+        context: Context do Telegram
+        endereco_id: ID do endereço (como string)
+
+    Returns:
+        Próximo estado da conversa
+    """
+    query = update.callback_query
+    await query.answer()
+
+    logger.info(
+        f'[iniciar_anotacao_por_id] INICIADO com endereco_id: {endereco_id}'
+    )
+
+    if not update.effective_user:
+        logger.error(
+            '[iniciar_anotacao_por_id] Não foi possível obter effective_user.'
+        )
+        await query.edit_message_text(
+            '😞 Ocorreu um erro ao processar sua identidade. '
+            'Por favor, tente novamente mais tarde.'
+        )
+        return ConversationHandler.END
+
+    try:
+        id_endereco = int(endereco_id)
+    except ValueError:
+        logger.error(f'[iniciar_anotacao_por_id] ID inválido: {endereco_id}')
+        await query.edit_message_text(
+            '❌ ID do endereço inválido.',
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        '↩️ Voltar', callback_data='voltar_resultados'
+                    )
+                ]
+            ]),
+        )
+        return ConversationHandler.END
+
+    user_id_telegram = update.effective_user.id
+    context.user_data['user_id_telegram'] = user_id_telegram
+    context.user_data['id_endereco_anotacao'] = id_endereco
+
+    # Buscar dados do endereço para confirmação
+    try:
+        filtros = FiltrosEndereco(limite=1)
+        enderecos = await buscar_endereco(
+            filtros=filtros,
+            id_endereco=id_endereco,
+            user_id=user_id_telegram,
+        )
+
+        if not enderecos or len(enderecos) == 0:
+            await query.edit_message_text(
+                '⚠️ Endereço não encontrado.',
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            '↩️ Voltar', callback_data='voltar_resultados'
+                        )
+                    ]
+                ]),
+            )
+            return ConversationHandler.END
+
+        endereco = enderecos[0]
+        await query.edit_message_text(
+            f'📝 *Adicionar Anotação*\n\n'
+            f'Endereço selecionado:\n{formatar_endereco(endereco)}\n\n'
+            f'Por favor, digite o texto da sua anotação:',
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=teclado_simples_cancelar_anotacao(),
+        )
+        return TEXTO
+
+    except Exception as e:
+        logger.error(f'Erro ao buscar endereço para anotação: {str(e)}')
+        await query.edit_message_text(
+            '😞 Ocorreu um erro ao buscar os dados do endereço. '
+            'Por favor, tente novamente mais tarde.',
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        '↩️ Voltar', callback_data='voltar_resultados'
+                    )
+                ]
+            ]),
+        )
+        return ConversationHandler.END
+
+
+def _extrair_id_endereco_callback(query, context):
+    """Extrai e valida o id_endereco a partir do callback ou contexto."""
+    if not query.data or not (
+        query.data.startswith('fazer_anotacao_')
+        or query.data.startswith('anotar_')
+    ):
+        id_endereco_contexto = context.user_data.get(
+            'endereco_id_para_anotacao'
+        )
+        if id_endereco_contexto:
+            return int(id_endereco_contexto), None
+        else:
+            return None, '❌ Ocorreu um erro ao processar sua solicitação.'
+    else:
+        try:
+            return int(query.data.split('_')[-1]), None
+        except (IndexError, ValueError):
+            return None, '❌ Erro ao identificar o endereço para anotação.'
 
 
 async def iniciar_anotacao_por_callback(
@@ -47,43 +172,32 @@ async def iniciar_anotacao_por_callback(
         f'[iniciar_anotacao_por_callback] INICIADO com callback_data: '
         f'{query.data}'
     )
+    logger.info(
+        f'[iniciar_anotacao_por_callback] user_data atual: {context.user_data}'
+    )
 
-    if not query.data or not query.data.startswith('fazer_anotacao_'):
+    # Verificar se o usuário está vindo de uma busca rápida ativa
+    if 'tipo_codigo_selecionado' in context.user_data:
+        context.user_data['veio_de_busca_rapida'] = True
+        logger.info(
+            '[iniciar_anotacao_por_callback] Detectada busca rápida ativa'
+        )
+
+    id_endereco, erro_id = _extrair_id_endereco_callback(query, context)
+    if erro_id:
         logger.warning(
-            f'[iniciar_anotacao_por_callback] Chamado com dados inválidos: '
-            f'{query.data}'
+            f'[iniciar_anotacao_por_callback] Erro ao extrair id_endereco: {
+                erro_id
+            }'
         )
-        # Tenta editar a mensagem original se possível, ou envia uma
-        #  nova se falhar.
         try:
-            await query.edit_message_text(
-                '❌ Ocorreu um erro ao processar sua solicitação.'
-            )
+            await query.edit_message_text(erro_id)
         except Exception:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text='❌ Ocorreu um erro ao processar sua solicitação.',
+                text=erro_id,
             )
         return ConversationHandler.END
-
-    try:
-        id_endereco = int(query.data.split('_')[-1])
-    except (IndexError, ValueError):
-        logger.error(
-            f'[iniciar_anotacao_por_callback] Não foi possível extrair '
-            f'id_endereco de callback_data: {query.data}'
-        )
-        try:
-            await query.edit_message_text(
-                '❌ Erro ao identificar o endereço para anotação.'
-            )
-        except Exception:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text='❌ Erro ao identificar o endereço para anotação.',
-            )
-        return ConversationHandler.END
-
     if not update.effective_user:
         logger.error(
             '[iniciar_anotacao_por_callback] Não foi possível obter'
@@ -112,11 +226,9 @@ async def iniciar_anotacao_por_callback(
     )
 
     try:
-        filtros = FiltrosEndereco(limite=1)
-        enderecos = await buscar_endereco(
-            filtros=filtros, id_endereco=id_endereco, user_id=user_id_telegram
+        enderecos = await _buscar_endereco_para_anotacao(
+            id_endereco, user_id_telegram, query, context
         )
-
         if not enderecos or len(enderecos) == 0:
             logger.warning(
                 f'[iniciar_anotacao_por_callback] Endereço {id_endereco} '
@@ -130,18 +242,15 @@ async def iniciar_anotacao_por_callback(
                 ' tente iniciar uma nova busca.'
             )
             context.user_data.pop('id_endereco_anotacao', None)
-            # user_id_telegram é mantido para outros possíveis usos na sessão
             return ConversationHandler.END
 
         endereco = enderecos[0]
-        # Edita a mensagem original do botão para pedir o texto da anotação
         await query.edit_message_text(
             text=f'📝 *Adicionar Anotação*\n\n'
             f'Endereço selecionado:\n{formatar_endereco(endereco)}\n\n'
             f'Por favor, digite o texto da sua anotação:',
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=teclado_simples_cancelar_anotacao(),
-            # Reutiliza o teclado de cancelamento
         )
         return TEXTO
     except Exception as e:
@@ -464,6 +573,55 @@ async def finalizar_anotacao(
     return ConversationHandler.END
 
 
+async def _enviar_msg_cancelamento(
+    update, context, query, message, texto='❌ Processo de anotação cancelado.'
+):
+    """Envia mensagem de cancelamento de forma centralizada."""
+    if query:
+        try:
+            await query.edit_message_text(texto)
+            logger.info('[cancelar_anotacao] Mensagem editada com sucesso.')
+            return
+        except Exception as e:
+            logger.warning(f'Não foi possível editar mensagem: {e}')
+            try:
+                await query.message.reply_text(texto)
+                logger.info(
+                    '[cancelar_anotacao] Nova mensagem enviada com sucesso.'
+                )
+                return
+            except Exception as e2:
+                logger.error(
+                    'Falha ao enviar mensagem alternativa de cancelamento: '
+                    f'{e2}'
+                )
+    if message:
+        try:
+            await message.reply_text(texto)
+            logger.info(
+                '[cancelar_anotacao] Mensagem enviada via comando /cancelar.'
+            )
+            return
+        except Exception as e:
+            logger.error(
+                f'Falha ao enviar mensagem de cancelamento via comando: {e}'
+            )
+    chat_id = context.user_data.get('chat_id') or (
+        update.effective_chat and update.effective_chat.id
+    )
+    if chat_id:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=texto)
+            logger.info(
+                '[cancelar_anotacao] Mensagem enviada via send_message.'
+            )
+        except Exception as e:
+            logger.error(
+                'Falha ao enviar mensagem de cancelamento via send_message: '
+                f'{e}'
+            )
+
+
 async def cancelar_anotacao(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
@@ -482,22 +640,47 @@ async def cancelar_anotacao(
 
     if query:
         await query.answer()
-        await query.message.reply_text('❌ Processo de anotação cancelado.')
-    elif message:  # Se foi um comando /cancelar
-        await message.reply_text('❌ Processo de anotação cancelado.')
-    else:
-        logger.warning('cancelar_anotacao chamado sem query ou message')
-        chat_id = context.user_data.get('chat_id') or (
-            update.effective_chat and update.effective_chat.id
-        )
-        if chat_id:
-            await context.bot.send_message(
-                chat_id=chat_id, text='❌ Processo de anotação cancelado.'
-            )
+    await _enviar_msg_cancelamento(update, context, query, message)
 
     for key in ['id_endereco_anotacao', 'texto_anotacao', 'user_id_telegram']:
         context.user_data.pop(key, None)
 
+    # Após cancelar, verificar se veio de busca rápida
+    veio_de_busca_rapida = context.user_data.get('veio_de_busca_rapida', False)
+
+    if veio_de_busca_rapida:
+        # Limpar o flag
+        context.user_data.pop('veio_de_busca_rapida', None)
+
+        # Retornar para a busca rápida no estado inicial
+        try:
+            logger.info('Retornando para busca rápida após cancelar anotação')
+            # Chamar iniciar_busca_rapida e retornar o estado correto
+            return await iniciar_busca_rapida(update, context)
+        except Exception as e:
+            logger.error(f'Erro ao retornar para busca rápida: {e}')
+            # Fallback: mostrar menu principal
+            try:
+                await exibir_menu_principal(
+                    update, context, editar_mensagem=True
+                )
+            except Exception as e2:
+                logger.error(f'Erro crítico no fallback: {e2}')
+    else:
+        # Comportamento padrão: exibir menu principal
+        try:
+            await exibir_menu_principal(update, context, editar_mensagem=True)
+        except Exception as e:
+            logger.error(
+                f'Erro ao exibir menu principal após cancelar anotação: {e}'
+            )
+            # Fallback: tentar enviar uma nova mensagem
+            try:
+                await exibir_menu_principal(
+                    update, context, editar_mensagem=False
+                )
+            except Exception as e2:
+                logger.error(f'Erro crítico no fallback: {e2}')
     return ConversationHandler.END
 
 
@@ -524,48 +707,74 @@ async def listar_anotacoes_command(
         id_endereco_arg = int(context.args[0])
 
     try:
-        # Atualizado para usar FiltrosEndereco
-        # Nenhum filtro específico além do ID,
-        #  então um FiltrosEndereco vazio é usado
-        # O limite padrão de FiltrosEndereco (10)
-        #  não se aplica quando id_endereco é fornecido.
         filtros = FiltrosEndereco()
-        anotacoes = await listar_anotacoes(
-            id_usuario_telegram=user_id_telegram,
-            id_endereco=id_endereco_arg,  # Passa o id_endereco_arg
+        anotacoes_dicts = await listar_anotacoes(
+            id_usuario=user_id_telegram if not id_endereco_arg else None,
+            id_endereco=id_endereco_arg,
             user_id=user_id_telegram,
         )
-        if not anotacoes:
+        if not anotacoes_dicts:
             if id_endereco_arg:
-                mensagem_sem_anotacoes = (
+                # Usar escape_markdown para tudo, inclusive o ponto final
+                texto_base = (
                     f'Você não possui anotações para o endereço com ID '
-                    f'{escape_markdown(str(id_endereco_arg))}\\.'
+                    f'{id_endereco_arg}.'
                 )
+                mensagem_sem_anotacoes = escape_markdown(texto_base)
                 await update.message.reply_text(
                     mensagem_sem_anotacoes, parse_mode=ParseMode.MARKDOWN_V2
                 )
             else:
-                await update.message.reply_text(
+                mensagem_sem_anotacoes = escape_markdown(
                     'Você ainda não possui nenhuma anotação.'
+                )
+                await update.message.reply_text(
+                    mensagem_sem_anotacoes, parse_mode=ParseMode.MARKDOWN_V2
                 )
             return
 
+        # Construir mensagem de forma mais limpa
         mensagem = '📝 *Suas Anotações*\n\n'
-        for anotacao_obj in anotacoes:  # Renomeado para evitar conflito
-            # Busca o endereço para cada anotação
-            # O ideal seria otimizar isso no backend para evitar N+1 queries
-            endereco_anotacao = await buscar_endereco(
+
+        for anotacao_dict in anotacoes_dicts:
+            try:
+                anotacao_obj = AnotacaoRead.model_validate(anotacao_dict)
+            except Exception as e:
+                logger.error(
+                    f'Erro ao validar anotação: {anotacao_dict}. Erro: {e}'
+                )
+                continue
+
+            endereco_anotacao_list = await buscar_endereco(
                 filtros=filtros,
                 id_endereco=anotacao_obj.id_endereco,
                 user_id=user_id_telegram,
             )
-            if endereco_anotacao and len(endereco_anotacao) > 0:
-                endereco_formatado = formatar_endereco(endereco_anotacao[0])
-                mensagem += (
-                    f'📍 *Endereço*: {endereco_formatado}\n'
-                    f'📝 *Anotação*: {escape_markdown(anotacao_obj.texto)}\n\n'
+            if endereco_anotacao_list and len(endereco_anotacao_list) > 0:
+                endereco_formatado = formatar_endereco(
+                    endereco_anotacao_list[0]
                 )
+                # endereco_formatado já vem escapado, não aplicar escape
+                #  novamente
+                # Apenas escapar os textos que não são markdown
+                mensagem += f'📍 *Endereço*: {endereco_formatado}\n'
+                mensagem += (
+                    f'📝 *Anotação*: {escape_markdown(anotacao_obj.texto)}\n'
+                )
+                mensagem += '\n'  # Linha em branco entre anotações
+            else:
+                id_endereco_str = str(anotacao_obj.id_endereco)
+                # Escapar apenas os dados dinâmicos, não a formatação markdown
+                mensagem += (
+                    f'⚠️ *Endereço ID {escape_markdown(id_endereco_str)} '
+                    f'não encontrado ou inacessível*\n'
+                )
+                mensagem += (
+                    f'📝 *Anotação*: {escape_markdown(anotacao_obj.texto)}\n'
+                )
+                mensagem += '\n'  # Linha em branco entre anotações
 
+        # Enviar mensagem final
         await update.message.reply_text(
             mensagem, parse_mode=ParseMode.MARKDOWN_V2
         )
@@ -575,6 +784,16 @@ async def listar_anotacoes_command(
             '😞 Ocorreu um erro ao listar as anotações. '
             'Por favor, tente novamente mais tarde.'
         )
+
+
+async def _buscar_endereco_para_anotacao(
+    id_endereco, user_id_telegram, query, context
+):
+    """Busca o endereço e retorna o objeto ou mensagem de erro."""
+    filtros = FiltrosEndereco(limite=1)
+    return await buscar_endereco(
+        filtros=filtros, id_endereco=id_endereco, user_id=user_id_telegram
+    )
 
 
 def get_anotacao_conversation() -> ConversationHandler:
@@ -590,7 +809,7 @@ def get_anotacao_conversation() -> ConversationHandler:
             CommandHandler('anotar', anotar_command),
             CallbackQueryHandler(
                 iniciar_anotacao_por_callback,
-                pattern=r'^fazer_anotacao_(\d+)$',
+                pattern=r'^(fazer_anotacao_|anotar_)\d+$',
             ),
         ],
         states={
@@ -625,10 +844,13 @@ def get_anotacao_conversation() -> ConversationHandler:
                 cancelar_anotacao, pattern=r'^cancelar_anotacao_simples$'
             ),
             CallbackQueryHandler(
+                cancelar_anotacao, pattern=r'^cancelar_processo_anotacao$'
+            ),
+            CallbackQueryHandler(
                 cancelar_anotacao, pattern=r'^finalizar_anotacao_nao$'
             ),  # Garante limpeza no cancelamento da confirmação
         ],
-        per_message=False,
+        per_message=False,  # False porque há MessageHandlers nos estados
         per_user=True,
         per_chat=True,
         # name="anotacao_conversation",  # Para persistência

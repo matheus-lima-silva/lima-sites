@@ -10,7 +10,11 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from ..config import ITENS_POR_PAGINA
-from ..formatters import formatar_endereco, formatar_lista_resultados
+from ..formatters.base import escape_markdown
+from ..formatters.endereco import (
+    formatar_endereco,
+    formatar_lista_resultados,
+)
 from ..keyboards import (
     criar_teclado_acoes_endereco,  # Adicionado
     criar_teclado_compartilhar_localizacao,
@@ -211,8 +215,8 @@ def _responder_erro_identidade(update):
         'Não foi possível obter effective_user no handler _processar_busca.'
     )
     return update.message.reply_text(
-        '😞 Ocorreu um erro ao processar sua identidade. '
-        'Por favor, tente novamente mais tarde.'
+        '😞 Ocorreu um erro ao processar sua identidade\\. '
+        'Por favor, tente novamente mais tarde\\.'
     )
 
 
@@ -257,17 +261,14 @@ async def _processar_resultado_unico(
 
     reply_markup = None
     if id_endereco_atual:
-        logger.info(
-            f'Criando teclado de ações para o ID: {id_endereco_atual}'
-        )
+        logger.info(f'Criando teclado de ações para o ID: {id_endereco_atual}')
         reply_markup = criar_teclado_acoes_endereco(
             id_endereco=id_endereco_atual
         )
         logger.info(f'Teclado de ações criado: {reply_markup}')
     else:
         logger.warning(
-            'ID do endereço não encontrado. '
-            'Teclado de ações não será exibido.'
+            'ID do endereço não encontrado. Teclado de ações não será exibido.'
         )
         logger.info(
             'Nenhum teclado de ação será exibido para resultado único sem ID.'
@@ -297,7 +298,8 @@ async def _processar_multiplos_resultados(
     ) // ITENS_POR_PAGINA
     itens_pagina = lista[:ITENS_POR_PAGINA]
     mensagem = (
-        f'🏢 *Encontrados {total_resultados} endereços*\n\n'
+        f'🏢 *Encontrados {escape_markdown(str(total_resultados))} '
+        f'endereços*\n\n'
         + formatar_lista_resultados(
             itens_pagina, 0, total_paginas, formatar_endereco
         )
@@ -334,7 +336,9 @@ async def _processar_busca(
             return
         user_id_telegram = update.effective_user.id
 
-        await update.message.reply_text('🔍 Buscando endereços, aguarde...')
+        await update.message.reply_text(
+            '🔍 Buscando endereços, aguarde\\.\\.\\.'
+        )
 
         params_busca = params_busca or {}
         latitude = params_busca.get('latitude')
@@ -365,7 +369,7 @@ async def _processar_busca(
         lista = _extrair_lista_enderecos(resultados)
         if not lista:
             await update.message.reply_text(
-                '😕 Nenhum endereço encontrado para os critérios informados.'
+                '😕 Nenhum endereço encontrado para os critérios informados\\.'
             )
             return
 
@@ -390,8 +394,8 @@ async def _processar_busca(
             'Erro ao processar busca: %s (tipo: %s)', e, type(e).__name__
         )
         await update.message.reply_text(
-            '😞 Ocorreu um erro ao processar sua busca. '
-            'Por favor, tente novamente mais tarde.'
+            '😞 Ocorreu um erro ao processar sua busca\\. '
+            'Por favor, tente novamente mais tarde\\.'
         )
 
 
@@ -411,14 +415,14 @@ async def _processar_busca_operadora(
                 ' _processar_busca_operadora.'
             )
             await update.message.reply_text(
-                '😞 Ocorreu um erro ao processar sua identidade. '
-                'Por favor, tente novamente mais tarde.'
+                '😞 Ocorreu um erro ao processar sua identidade\\. '
+                'Por favor, tente novamente mais tarde\\.'
             )
             return
         user_id_telegram = update.effective_user.id
 
         await update.message.reply_text(
-            '🔍 Buscando endereços por id da operadora, aguarde...'
+            '🔍 Buscando endereços por id da operadora, aguarde\\.\\.\\.'
         )
         resultados = await buscar_por_operadora(
             codigo_operadora, user_id=user_id_telegram
@@ -431,7 +435,7 @@ async def _processar_busca_operadora(
         lista = _extrair_lista_enderecos(resultados)
         if not lista:
             await update.message.reply_text(
-                '😕 Nenhum endereço encontrado para a operadora informada.'
+                '😕 Nenhum endereço encontrado para a operadora informada\\.'
             )
             return
         context.user_data['resultados_busca'] = lista
@@ -492,8 +496,8 @@ async def _processar_busca_operadora(
             ) // ITENS_POR_PAGINA
             itens_pagina = lista[:ITENS_POR_PAGINA]
             mensagem = (
-                f'🏢 *Encontrados {total_resultados} endereços '
-                f'da operadora*\\n\\n'
+                f'🏢 *Encontrados {escape_markdown(str(total_resultados))} '
+                f'endereços da operadora*\n\n'
             ) + formatar_lista_resultados(
                 itens_pagina, 0, total_paginas, formatar_endereco
             )
@@ -522,6 +526,6 @@ async def _processar_busca_operadora(
             'Erro ao buscar por operadora: %s (tipo: %s)', e, type(e).__name__
         )
         await update.message.reply_text(
-            '😞 Ocorreu um erro ao buscar endereços da operadora. '
-            'Por favor, tente novamente mais tarde.'
+            '😞 Ocorreu um erro ao buscar endereços da operadora\\. '
+            'Por favor, tente novamente mais tarde\\.'
         )

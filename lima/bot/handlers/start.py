@@ -8,7 +8,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from ..formatters import escape_markdown
+from ..formatters.base import escape_markdown
 from ..services.usuario import obter_ou_criar_usuario
 
 logger = logging.getLogger(__name__)
@@ -24,16 +24,16 @@ async def start_command(
     """
     user = update.effective_user
     if not user:
-        logger.warning("Comando /start recebido sem um usuário efetivo.")
+        logger.warning('Comando /start recebido sem um usuário efetivo.')
         await update.message.reply_text(
-            "Não foi possível identificar seu usuário. Tente novamente."
+            'Não foi possível identificar seu usuário. Tente novamente.'
         )
         return
 
     user_id_telegram = user.id
     # O telefone é usado como identificador único no formato 'telegram_<ID>'
     # e também para o campo 'telefone' no schema UsuarioCreate via API.
-    telefone_para_registro_e_busca = f"telegram_{user_id_telegram}"
+    telefone_para_registro_e_busca = f'telegram_{user_id_telegram}'
     nome_usuario = user.full_name
 
     try:
@@ -57,13 +57,13 @@ async def start_command(
             context.user_data['usuario_id'] = usuario_data.get('id')
         else:
             logger.error(
-                f"Não foi possível obter/criar usuário para "
-                f"{user_id_telegram} no comando /start. "
-                f"Resposta: {usuario_data}"
+                f'Não foi possível obter/criar usuário para '
+                f'{user_id_telegram} no comando /start. '
+                f'Resposta: {usuario_data}'
             )
             await update.message.reply_text(
-                "Houve um problema ao configurar sua conta. "
-                "Por favor, tente /start novamente mais tarde."
+                'Houve um problema ao configurar sua conta. '
+                'Por favor, tente /start novamente mais tarde.'
             )
             return
 
@@ -88,7 +88,7 @@ async def start_command(
         )
     except Exception as e:
         error_log_msg = (
-            f"Erro no comando start para user_id {user_id_telegram}: {str(e)}"
+            f'Erro no comando start para user_id {user_id_telegram}: {str(e)}'
         )
         logger.error(error_log_msg)
         await update.message.reply_text(
@@ -106,21 +106,26 @@ async def help_command(
     """
     try:
         mensagem = (
-            '*Comandos Disponíveis:*\n\n'
-            '*/buscar* \\<termo\\> \\- Busca endereços por termo geral\n'
-            '*/cep* \\<cep\\> \\- Busca endereços por CEP\n'
-            '*/id* \\<id\\> \\- Busca um endereço específico por ID\n'
-            '*/cidade* \\<cidade\\> \\- Busca endereços em uma cidade\n'
-            '*/uf* \\<uf\\> \\- Busca endereços em um estado\n'
-            '*/operadora* \\<operadora\\> \\- Busca por operadora\n'
-            '*/sugerir* \\- Inicia processo para enviar uma sugestão\n'
-            '*/anotar* \\<id\\> \\- Adiciona anotação a um endereço\n'
-            '*/compartilhar* \\<id\\> \\- Compartilha dados de um endereço\n'
-            '*/localizacao* \\- Busca endereços próximos à sua localização'
-            ' atual\n'
+            '*Comandos de Busca por Código:*\n'
+            '*/id\\_operadora* \\<código\\> \\-'
+            ' Busca pelo código da operadora\n'
+            '*/id\\_detentora* \\<código\\> \\'
+            '- Busca pelo código da detentora\n'
+            '*/id\\_sistema* \\<id\\> \\- Busca pelo ID interno do sistema\n'
+            '*/cep* \\<cep\\> \\- Busca endereços por CEP\n\n'
+            '*Comandos de Listagem e Filtros:*\n'
+            '*/listar* \\- Lista endereços com paginação\n'
+            '*/filtrar\\_cidade* \\<cidade\\> \\- Filtra por cidade\n'
+            '*/filtrar\\_uf* \\<uf\\> \\- Filtra por estado\n'
+            '*/filtrar\\_operadora* \\<nome\\> \\- Filtra por operadora\n\n'
+            '*Comandos de Funcionalidade:*\n'
+            '*/anotar* \\<id\\_sistema\\> \\- Adiciona anotação\n'
+            '*/anotacoes* \\[id\\_sistema\\] \\- Lista suas anotações\n'
+            '*/sugerir* \\- Envia sugestão de melhoria\n'
+            '*/localizacao* \\- Busca por proximidade geográfica\n'
             '*/help* \\- Mostra esta ajuda\n\n'
-            'Você também pode usar os botões interativos para navegar'
-            ' pelos resultados\\.'
+            '*Dica:* Use os botões interativos'
+            ' para navegar pelos resultados\\!'
         )
 
         await update.message.reply_text(
