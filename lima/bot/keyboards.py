@@ -38,6 +38,11 @@ def criar_teclado_filtros() -> InlineKeyboardMarkup:
                 '📱 Filtrar por Operadora', callback_data='filtro_operadora'
             ),
         ],
+        [
+            InlineKeyboardButton(
+                '🏗️ Filtrar por Tipo', callback_data='filtro_tipo'
+            ),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -71,6 +76,38 @@ def criar_teclado_tipos_endereco() -> InlineKeyboardMarkup:
             ),
         ],
         [InlineKeyboardButton('Voltar', callback_data='filtro_voltar')],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def criar_teclado_tipos_codigo() -> InlineKeyboardMarkup:
+    """
+    Cria o teclado para seleção do tipo de código.
+
+    Returns:
+        Teclado inline com tipos de código disponíveis.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                '📱 Código da Operadora', callback_data='tipo_cod_operadora'
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '🏢 Código da Detentora', callback_data='tipo_cod_detentora'
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '🆔 ID do Sistema', callback_data='tipo_id_sistema'
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '↩️ Voltar ao Menu', callback_data='voltar_menu_principal'
+            )
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -197,6 +234,71 @@ def criar_teclado_compartilhar_localizacao() -> ReplyKeyboardMarkup:
     )
 
 
+def criar_teclado_selecionar_tipo_sugestao_geral() -> InlineKeyboardMarkup:
+    """
+    Cria teclado para selecionar o tipo de sugestão (fluxo geral).
+    Usado quando o comando /sugerir é chamado.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                '➕ Adicionar Novo Endereço',
+                callback_data='sugest_tipo_adicao',
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '✏️ Modificar Endereço Existente',
+                callback_data='sugest_tipo_modificar_pedir_id',
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '❌ Remover Endereço Existente',
+                callback_data='sugest_tipo_remover_pedir_id',
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '🚫 Cancelar Sugestão',
+                callback_data='sugest_cancelar_geral',
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def criar_teclado_selecionar_tipo_sugestao_para_endereco(
+    id_endereco: int,
+) -> InlineKeyboardMarkup:
+    """
+    Cria teclado para selecionar o tipo de sugestão para um endereço
+    específico. Usado quando o botão "Sugerir Melhoria" de um endereço
+    é clicado. O id_endereco já foi capturado e estará no contexto.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                '✏️ Modificar Este Endereço',
+                callback_data='sugest_tipo_modificar_com_id_atual',
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '❌ Remover Este Endereço',
+                callback_data='sugest_tipo_remover_com_id_atual',
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '🚫 Cancelar Sugestão',
+                callback_data='sugest_cancelar_geral',
+            )
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 def criar_teclado_resultados_combinado(
     pagina_atual: int,
     total_resultados: int,
@@ -254,13 +356,13 @@ def teclado_endereco_nao_encontrado_criar() -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                "🔍 Tentar outro código",
+                '🔍 Tentar outro código',
                 callback_data='tentar_outro_codigo_anotacao',
             )
         ],
         [
             InlineKeyboardButton(
-                "❌ Cancelar", callback_data='cancelar_nova_anotacao_direto'
+                '❌ Cancelar', callback_data='cancelar_nova_anotacao_direto'
             )
         ],
     ]
@@ -271,7 +373,7 @@ def teclado_simples_cancelar_anotacao() -> InlineKeyboardMarkup:
     """Retorna um teclado inline com um único botão 'Cancelar'."""
     button = [
         InlineKeyboardButton(
-            "❌ Cancelar", callback_data="cancelar_processo_anotacao"
+            '❌ Cancelar', callback_data='cancelar_processo_anotacao'
         )
     ]
     return InlineKeyboardMarkup([button])
@@ -290,13 +392,139 @@ def criar_teclado_acoes_endereco(id_endereco: int) -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                "📝 Fazer Anotação",
-                callback_data=f'fazer_anotacao_{id_endereco}'
+                '📝 Fazer Anotação',
+                callback_data=f'fazer_anotacao_{id_endereco}',
             ),
             InlineKeyboardButton(
-                "📖 Ler Anotações",
-                callback_data=f'ler_anotacoes_{id_endereco}'
+                '📖 Ler Anotações',
+                callback_data=f'ler_anotacoes_{id_endereco}',
             ),
         ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def criar_teclado_ufs_comuns() -> InlineKeyboardMarkup:
+    """
+    Cria teclado com as UFs mais comuns para filtro rápido.
+
+    Returns:
+        Teclado inline com UFs comuns.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton('SP', callback_data='filtro_uf_SP'),
+            InlineKeyboardButton('RJ', callback_data='filtro_uf_RJ'),
+            InlineKeyboardButton('MG', callback_data='filtro_uf_MG'),
+        ],
+        [
+            InlineKeyboardButton('RS', callback_data='filtro_uf_RS'),
+            InlineKeyboardButton('PR', callback_data='filtro_uf_PR'),
+            InlineKeyboardButton('SC', callback_data='filtro_uf_SC'),
+        ],
+        [
+            InlineKeyboardButton('BA', callback_data='filtro_uf_BA'),
+            InlineKeyboardButton('GO', callback_data='filtro_uf_GO'),
+            InlineKeyboardButton('DF', callback_data='filtro_uf_DF'),
+        ],
+        [
+            InlineKeyboardButton(
+                '✏️ Digitar outra UF', callback_data='filtro_uf_custom'
+            ),
+            InlineKeyboardButton('🔙 Voltar', callback_data='filtro_voltar'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def criar_teclado_operadoras_comuns() -> InlineKeyboardMarkup:
+    """
+    Cria teclado com as operadoras mais comuns para filtro rápido.
+
+    Returns:
+        Teclado inline com operadoras comuns.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton('CLARO', callback_data='filtro_op_CLARO'),
+            InlineKeyboardButton('VIVO', callback_data='filtro_op_VIVO'),
+        ],
+        [
+            InlineKeyboardButton('TIM', callback_data='filtro_op_TIM'),
+            InlineKeyboardButton('OI', callback_data='filtro_op_OI'),
+        ],
+        [
+            InlineKeyboardButton('ALGAR', callback_data='filtro_op_ALGAR'),
+            InlineKeyboardButton('NEXTEL', callback_data='filtro_op_NEXTEL'),
+        ],
+        [
+            InlineKeyboardButton(
+                '✏️ Digitar outra operadora',
+                callback_data='filtro_operadora_custom',
+            ),
+            InlineKeyboardButton('🔙 Voltar', callback_data='filtro_voltar'),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def criar_botoes_acao_endereco(id_sistema: int) -> InlineKeyboardMarkup:
+    """
+    Cria botões de ação contextual para um endereço visualizado.
+
+    Args:
+        id_sistema: ID do sistema do endereço
+
+    Returns:
+        Teclado inline com ações contextuais.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                '➕ Nova Anotação', callback_data=f'anotar_{id_sistema}'
+            ),
+            InlineKeyboardButton(
+                '✏️ Sugerir Melhoria', callback_data=f'sugerir_{id_sistema}'
+            ),
+            InlineKeyboardButton(
+                '🗒️ Ver todas as anotações',
+                callback_data=f'ver_anotacoes_{id_sistema}',
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                '🔄 Nova Busca Rápida', callback_data='nova_busca_rapida'
+            ),
+            InlineKeyboardButton(
+                '↩️ Voltar ao Menu', callback_data='voltar_menu_principal'
+            ),
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def criar_botoes_nenhum_resultado() -> InlineKeyboardMarkup:
+    """
+    Cria botões para quando não há resultados na busca.
+
+    Returns:
+        Teclado inline com opções para nenhum resultado.
+    """
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                '💡 Tentar Outro Código', callback_data='nova_busca_rapida'
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '🗺️ Explorar Base', callback_data='menu_explorar_base'
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                '↩️ Voltar ao Menu', callback_data='voltar_menu_principal'
+            )
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
