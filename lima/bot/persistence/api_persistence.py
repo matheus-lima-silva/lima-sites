@@ -7,6 +7,7 @@ reutilizando o cliente HTTP já existente.
 
 import json
 import logging
+import time
 from typing import Any, Dict, Optional, Tuple
 
 from telegram.ext import BasePersistence, PersistenceInput
@@ -19,6 +20,37 @@ from ..api_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class AuthCache:
+    """Cache simples para autenticação do usuário atual."""
+
+    def __init__(self, ttl: int = 30):  # TTL de 30 segundos
+        self.cache = {}
+        self.ttl = ttl
+
+    def get(self, key: str):
+        """Obtém um valor do cache se ainda válido."""
+        if key in self.cache:
+            timestamp, value = self.cache[key]
+            if time.time() - timestamp < self.ttl:
+                return value
+            else:
+                # Remove entrada expirada
+                del self.cache[key]
+        return None
+
+    def set(self, key: str, value: Any):
+        """Define um valor no cache com timestamp atual."""
+        self.cache[key] = (time.time(), value)
+
+    def clear(self):
+        """Limpa todo o cache."""
+        self.cache.clear()
+
+
+# Instância global do cache de autenticação
+_auth_cache = AuthCache()
 
 
 async def _safe_api_call(func, *args, **kwargs):
@@ -160,34 +192,88 @@ class ApiPersistence(BasePersistence):
     async def update_chat_data(
         self, chat_id: int, data: Dict[str, Any]
     ) -> None:
-        """Atualiza dados do chat via API."""
-        await self._save_state(
-            conversation_data={
-                'user_id': 0,
-                'chat_id': chat_id,
-                'conversation_name': 'chat_data',
-                'data': data,
-            },
-            auth_params={
-                'auth_user_id': 1000000,
-                'auth_user_name': 'LimaBot',
-            },
+        """
+        Atualiza dados do chat via API.
+
+        Utiliza o endpoint /usuarios/me para obter informações do usuário atual
+        sempre que possível, com fallback para autenticação do bot.
+
+        Args:
+            chat_id: ID do chat no Telegram
+            data: Dados a serem salvos para o chat
+        """
+        if not isinstance(data, dict):
+            logger.error(f'Dados inválidos para chat_data: {type(data)}')
+            raise ValueError('Os dados do chat devem ser um dicionário')
+
+        if not chat_id:
+            logger.error('chat_id não pode ser vazio ou zero')
+            raise ValueError('chat_id é obrigatório')
+
+        # Tenta obter informações do usuário atual via /usuarios/me
+        auth_params = await self._get_current_user_auth()
+
+        logger.info(
+            f'Atualizando chat_data para chat_id={chat_id} '
+            f'com {len(data)} campos, '
+            f'autenticado como: {auth_params.get("auth_user_name", "LimaBot")}'
         )
 
+        try:
+            await self._save_state(
+                conversation_data={
+                    'user_id': 0,
+                    'chat_id': chat_id,
+                    'conversation_name': 'chat_data',
+                    'data': data,
+                },
+                auth_params=auth_params,
+            )
+            logger.debug(
+                f'Chat_data atualizado com sucesso para chat_id={chat_id}'
+            )
+        except Exception as e:
+            logger.error(
+                f'Erro ao atualizar chat_data para chat_id={chat_id}: {e}'
+            )
+            raise
+
     async def update_bot_data(self, data: Dict[str, Any]) -> None:
-        """Atualiza dados globais do bot via API."""
-        await self._save_state(
-            conversation_data={
-                'user_id': 0,
-                'chat_id': 0,
-                'conversation_name': 'bot_data',
-                'data': data,
-            },
-            auth_params={
-                'auth_user_id': 1000000,
-                'auth_user_name': 'LimaBot',
-            },
+        """
+        Atualiza dados globais do bot via API.
+
+        Utiliza o endpoint /usuarios/me para obter informações do usuário atual
+        sempre que possível, com fallback para autenticação do bot.
+
+        Args:
+            data: Dados globais a serem salvos para o bot
+        """
+        if not isinstance(data, dict):
+            logger.error(f'Dados inválidos para bot_data: {type(data)}')
+            raise ValueError('Os dados do bot devem ser um dicionário')
+
+        # Tenta obter informações do usuário atual via /usuarios/me
+        auth_params = await self._get_current_user_auth()
+
+        logger.info(
+            f'Atualizando bot_data com {len(data)} campos, '
+            f'autenticado como: {auth_params.get("auth_user_name", "LimaBot")}'
         )
+
+        try:
+            await self._save_state(
+                conversation_data={
+                    'user_id': 0,
+                    'chat_id': 0,
+                    'conversation_name': 'bot_data',
+                    'data': data,
+                },
+                auth_params=auth_params,
+            )
+            logger.debug('Bot_data atualizado com sucesso')
+        except Exception as e:
+            logger.error(f'Erro ao atualizar bot_data: {e}')
+            raise
 
     async def update_callback_data(self, data: object) -> None:
         """Atualiza dados de callback (não implementado)."""
@@ -281,7 +367,83 @@ class ApiPersistence(BasePersistence):
         return user_id, chat_id, conversation_name, state, data
 
     @staticmethod
-    def _resolve_auth(auth_params: Optional[Dict[str, Any]], user_id: int):
+    async def _get_current_user_auth() -> Dict[str, Any]:
+        """
+        Obtém parâmetros de autenticação do usuário atual com cache.
+
+        Tenta usar o endpoint /usuarios/me para obter informações do usuário
+        atual. Em caso de falha, usa fallback para autenticação do bot.
+        Utiliza cache para evitar rate limiting.
+
+        Returns:
+            Dicionário com auth_user_id e auth_user_name
+        """
+        # Verifica se há dados em cache
+        cache_key = "current_user_auth"
+        cached_auth = _auth_cache.get(cache_key)
+        if cached_auth:
+            logger.debug('Usando dados de autenticação do cache')
+            return cached_auth
+
+        try:
+            # Tenta obter informações do usuário atual via /usuarios/me
+            user_info = await _safe_api_call(
+                fazer_requisicao_get,
+                endpoint='usuarios/me',
+                # Não passa user_id/user_name aqui pois o endpoint
+                # usa o token de autenticação
+            )
+
+            if user_info and isinstance(user_info, dict):
+                user_id = user_info.get('id')
+                user_name = user_info.get('nome') or f'User_{user_id}'
+
+                logger.debug(
+                    f'Usuário atual obtido via /usuarios/me: '
+                    f'id={user_id}, nome={user_name}'
+                )
+
+                auth_data = {
+                    'auth_user_id': user_id,
+                    'auth_user_name': user_name,
+                }
+
+                # Armazena no cache
+                _auth_cache.set(cache_key, auth_data)
+                return auth_data
+
+        except Exception as e:
+            logger.warning(
+                f'Falha ao obter usuário atual via /usuarios/me: {e}. '
+                'Usando fallback para autenticação do bot.'
+            )
+
+        # Fallback para autenticação do bot
+        logger.debug('Usando autenticação fallback do bot')
+        fallback_auth = {
+            'auth_user_id': 1000000,
+            'auth_user_name': 'LimaBot',
+        }
+
+        # Armazena fallback no cache também (mas com TTL menor)
+        _auth_cache.set(cache_key, fallback_auth)
+        return fallback_auth
+
+    @staticmethod
+    def _resolve_auth(
+        auth_params: Optional[Dict[str, Any]], user_id: int
+    ) -> Tuple[int, str]:
+        """
+        Resolve os parâmetros de autenticação baseado nos
+          parâmetros fornecidos.
+
+        Args:
+            auth_params: Parâmetros de autenticação opcionais
+            user_id: ID do usuário da conversação
+
+        Returns:
+            Tupla com (request_user_id, request_user_name)
+        """
         auth_params = auth_params or {}
         auth_user_id = auth_params.get('auth_user_id')
         auth_user_name = auth_params.get('auth_user_name')

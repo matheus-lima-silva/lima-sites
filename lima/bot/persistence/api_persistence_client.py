@@ -358,22 +358,44 @@ class ApiPersistenceClient:
         """
         Salva dados globais do bot.
 
+        Utiliza o endpoint /usuarios/me para obter informações do usuário atual
+        sempre que possível, integrando melhor com o sistema de autenticação.
+
         Args:
             data: Dados a serem salvos
-            user_name: Nome do usuário (opcional)
+            user_name: Nome do usuário (opcional, usado como fallback)
 
         Returns:
             True se salvou com sucesso, False caso contrário
         """
-        return await self.save_conversation_state(
-            conversation_data={
-                'user_id': 0,  # Para bot_data, user_id é 0
-                'chat_id': 0,  # Para bot_data, chat_id é 0
-                'conversation_name': 'bot_data',
-                'data': data,
-            },
-            user_name=user_name,
+        if not isinstance(data, dict):
+            logger.error(f'Dados inválidos para bot_data: {type(data)}')
+            return False
+
+        # Tenta obter informações do usuário atual via /usuarios/me
+        effective_user_name = await self._get_effective_user_name(user_name)
+
+        logger.info(
+            f'Salvando bot_data com {len(data)} campos, '
+            f'user_name: {effective_user_name}'
         )
+
+        try:
+            result = await self.save_conversation_state(
+                conversation_data={
+                    'user_id': 0,  # Para bot_data, user_id é 0
+                    'chat_id': 0,  # Para bot_data, chat_id é 0
+                    'conversation_name': 'bot_data',
+                    'data': data,
+                },
+                user_name=effective_user_name,
+            )
+            if result:
+                logger.debug('Bot_data salvo com sucesso')
+            return result
+        except Exception as e:
+            logger.error(f'Erro ao salvar bot_data: {e}')
+            return False
 
     async def get_conversations_by_name(
         self, name: str, user_name: Optional[str] = None
