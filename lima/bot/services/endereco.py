@@ -64,21 +64,26 @@ async def buscar_endereco(
 
     if id_endereco:
         # Se busca por ID, usa endpoint específico
-        endereco = await fazer_requisicao_get(f'enderecos/admin/{id_endereco}',
-        # Modificado aqui
-         user_id=user_id)
+        endereco = await fazer_requisicao_get(
+            f'enderecos/admin/{id_endereco}',
+            params={'load_relations': True},  # Carrega relacionamentos
+            user_id=user_id,
+        )
         return [endereco] if endereco else []
     else:
         # Busca geral com filtros
         return await fazer_requisicao_get(
-            'enderecos/', params, user_id=user_id)
+            'enderecos/', params, user_id=user_id
+        )
 
 
 async def registrar_busca(
-    id_usuario: int, id_endereco: int, info_adicional: Optional[str] = None,
+    id_usuario: int,
+    id_endereco: int,
+    info_adicional: Optional[str] = None,
     user_id: Optional[int] = None,
-      # Adicionado user_id para consistência, embora a chamada POST possa não
-      #  usá-lo diretamente para auth se o token já estiver no header
+    # Adicionado user_id para consistência, embora a chamada POST possa não
+    #  usá-lo diretamente para auth se o token já estiver no header
 ) -> Dict[str, Any]:
     """
     Registra uma busca no histórico.
@@ -102,7 +107,9 @@ async def registrar_busca(
 
 
 async def buscar_por_coordenadas(
-    latitude: float, longitude: float, raio: Optional[float] = None,
+    latitude: float,
+    longitude: float,
+    raio: Optional[float] = None,
     user_id: Optional[int] = None,  # Adicionado user_id
 ) -> List[Dict[str, Any]]:
     """
@@ -122,12 +129,14 @@ async def buscar_por_coordenadas(
     if raio:
         params['raio'] = raio
 
-    return await fazer_requisicao_get('enderecos/busca/coordenadas', params,
-         user_id=user_id)
+    return await fazer_requisicao_get(
+        'enderecos/busca/coordenadas', params, user_id=user_id
+    )
 
 
-async def obter_detentoras(user_id: Optional[int] = None) -> List[Dict[
-    str, Any]]:
+async def obter_detentoras(
+    user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     # Adicionado user_id
     """
     Obtém a lista de detentoras cadastradas.
@@ -141,8 +150,9 @@ async def obter_detentoras(user_id: Optional[int] = None) -> List[Dict[
     return await fazer_requisicao_get('detentoras/', user_id=user_id)
 
 
-async def obter_operadoras(user_id: Optional[int] = None) -> List[
-    Dict[str, Any]]:
+async def obter_operadoras(
+    user_id: Optional[int] = None,
+) -> List[Dict[str, Any]]:
     # Adicionado user_id
     """
     Obtém a lista de operadoras cadastradas.
@@ -175,3 +185,80 @@ async def buscar_por_operadora(
     endpoint = f'enderecos/busca/por-operadora/{codigo_operadora}'
     params = {'limit': limite, 'skip': skip}
     return await fazer_requisicao_get(endpoint, params, user_id=user_id)
+
+
+async def buscar_endereco_por_codigo(
+    codigo: str,
+    tipo_codigo: str,
+    usuario_id: Optional[int] = None,
+    user_id_telegram: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Busca endereços por diferentes tipos de código.
+
+    Args:
+        codigo: O código a ser buscado
+        tipo_codigo: Tipo do código (
+        'cod_operadora', 'cod_detentora', 'id_sistema')
+        usuario_id: ID do usuário no sistema interno (opcional)
+        user_id_telegram: ID do usuário do Telegram para autenticação
+
+    Returns:
+        Lista de endereços encontrados
+    """
+    try:
+        if tipo_codigo == 'cod_operadora':
+            # Usar o endpoint específico para busca por operadora
+            return await buscar_por_operadora(
+                codigo_operadora=codigo,
+                limite=50,
+                # Permitir mais resultados para códigos com múltiplos matches
+                skip=0,
+                user_id=user_id_telegram,
+            )
+
+        elif tipo_codigo == 'cod_detentora':
+            # Busca por código de detentora usando query geral com filtro
+            filtros = FiltrosEndereco(query=codigo, limite=50)
+            resultados = await buscar_endereco(
+                filtros, user_id=user_id_telegram
+            )
+
+            # Filtrar resultados que realmente correspondem
+            #  ao código da detentora
+            # (isso pode precisar ser ajustado dependendo
+            #  da estrutura de dados)
+            return [
+                r
+                for r in resultados
+                if r.get('detentora_codigo') == codigo
+                or r.get('codigo_detentora') == codigo
+                or codigo.lower() in str(r.get('detentora_nome', '')).lower()
+            ]
+
+        elif tipo_codigo == 'id_sistema':
+            # Busca por ID do sistema usando endpoint específico
+            try:
+                id_endereco = int(codigo)
+                return await buscar_endereco(
+                    FiltrosEndereco(limite=1),
+                    id_endereco=id_endereco,
+                    user_id=user_id_telegram,
+                )
+            except ValueError:
+                logger.warning(
+                    f'ID do sistema inválido (não é um número): {codigo}'
+                )
+                return []
+
+        else:
+            logger.error(f'Tipo de código não suportado: {tipo_codigo}')
+            return []
+
+    except Exception as e:
+        logger.error(
+            f'Erro ao buscar endereço por código {codigo} (tipo: {
+                tipo_codigo
+            }): {str(e)}'
+        )
+        return []

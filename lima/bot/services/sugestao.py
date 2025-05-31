@@ -98,7 +98,7 @@ async def atualizar_status_sugestao(
     id_sugestao: int,
     status: str,
     id_usuario: int,  # Este é o id_usuario que realiza a
-     # ação, não necessariamente o dono da sugestão
+    # ação, não necessariamente o dono da sugestão
     justificativa: Optional[str] = None,
     user_id: Optional[
         int

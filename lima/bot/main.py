@@ -3,6 +3,7 @@ Módulo principal do bot Telegram.
 Este módulo contém a inicialização e configuração do bot.
 """
 
+import asyncio
 import logging
 import sys
 from typing import Optional
@@ -18,7 +19,13 @@ from telegram.ext import (
     filters,
 )
 
-from ..settings import Settings  # Adicionar esta importação
+from .persistence.api_persistence import ApiPersistence
+
+try:
+    from ..settings import Settings  # Importação relativa para uso como módulo
+except ImportError:
+    from lima.settings import Settings  # Importação absoluta
+
 from .config import (
     LOG_LEVEL,
     SECRET_TOKEN,
@@ -27,8 +34,26 @@ from .config import (
     WEBHOOK_PORT,
     WEBHOOK_URL,
 )
-from .handlers import anotacao, busca, start, sugestao
+
+# Novos handlers V2
+from .handlers import (
+    anotacao,
+    busca,
+    busca_codigo,
+    explorar_base,
+    menu,
+    sugestao,
+)
+from .handlers.busca_codigo import (  # Adicionado para importar cancelar_busca
+    cancelar_busca,
+    selecionar_resultado_multiplo_callback,
+)
 from .handlers.callback import handle_callback
+from .handlers.endereco_visualizacao import (
+    paginacao_multiplos_callback,
+    show_endereco_callback,
+    ver_todas_anotacoes_callback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +115,11 @@ def configurar_logging() -> None:
     )
 
     # Configura loggers específicos
-    # Você pode querer diminuir o nível aqui também se precisar de
-    #  logs mais detalhados deles
     logging.getLogger('httpx').setLevel(logging.WARNING)
+    # Adicionado para httpcore
+    logging.getLogger('httpcore').setLevel(logging.WARNING)
+    # Adicionado para SQLAlchemy
+    logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
     logging.getLogger('telegram').setLevel(
         logging.INFO if settings.DEBUG else logging.WARNING
     )  # Alterado para INFO em DEBUG
@@ -121,21 +148,117 @@ def criar_aplicacao() -> Application:
         )
         sys.exit(1)
 
-    # Cria aplicação
+    # Cria aplicação com persistência no banco de dados
     try:
-        application = Application.builder().token(TOKEN_BOT).build()
+        # Usar nova persistência baseada em API REST
+        persistence = ApiPersistence()
+        application = (
+            Application.builder()
+            .token(TOKEN_BOT)
+            .persistence(persistence)
+            .build()
+        )
     except Exception as e:
         logger.error(f'Erro ao criar aplicação: {str(e)}')
         sys.exit(1)
 
+    # Armazenar funções para quebrar ciclos de importação
+    application.bot_data['exibir_menu_principal_func'] = (
+        menu.exibir_menu_principal
+    )
+    application.bot_data['iniciar_exploracao_func'] = (
+        explorar_base.iniciar_exploracao
+    )
+    # Adicionada iniciar_exploracao_func para consistência, caso menu.py
+    # precise dela no futuro ou para outros handlers.
+
     # Registra o handler de erros
     application.add_error_handler(error_handler)
 
-    # Comandos básicos
-    application.add_handler(CommandHandler('start', start.start_command))
-    application.add_handler(CommandHandler('help', start.help_command))
+    # === HANDLERS V2 - BUSCA RÁPIDA POR CÓDIGO ===
+    # ConversationHandler para busca rápida por código (deve vir antes do menu)
+    application.add_handler(busca_codigo.handler_busca_rapida)
 
-    # Comandos de busca
+    # === HANDLERS V2 - MENU PRINCIPAL ===
+    # Registrar handlers do menu principal
+    # (inclui /start, /help, /listar, /cancelar)
+    for handler in menu.get_menu_handlers():
+        application.add_handler(handler)
+
+    # Comandos diretos de busca por código
+    for handler in busca_codigo.get_busca_codigo_handlers():
+        application.add_handler(handler)
+
+    # === HANDLERS V2 - EXPLORAÇÃO DA BASE ===
+    # ConversationHandler para exploração com filtros
+    application.add_handler(
+        explorar_base.criar_conversation_handler_exploracao()
+    )
+
+    # === HANDLERS DE SUGESTÃO E ANOTAÇÃO
+    #  (sempre antes do CallbackQueryHandler genérico) ===
+    application.add_handler(sugestao.get_sugestao_conversation())
+    application.add_handler(anotacao.get_anotacao_conversation())
+
+    # === CALLBACKQUERYHANDLER DE EXPLORAÇÃO
+    #  (se necessário, antes do genérico) ===
+    application.add_handler(
+        CallbackQueryHandler(
+            explorar_base.handle_explorar_callback,
+            pattern=r'^(explorar_|voltar_filtros|voltar_resultados|'
+            r'executar_busca|limpar_filtros|refazer_busca|'
+            r'ver_endereco_|anotar_|filtro_)',
+        )
+    )
+
+    # === HANDLER PARA VER TODAS AS ANOTAÇÕES DE UM ENDEREÇO ===
+    application.add_handler(
+        CallbackQueryHandler(
+            ver_todas_anotacoes_callback,
+            # Usar a função importada diretamente
+            pattern=r'^ver_anotacoes_\d+$',
+        )
+    )
+
+    # === HANDLER PARA VOLTAR AO ENDEREÇO COMPLETO ===
+    application.add_handler(
+        CallbackQueryHandler(
+            show_endereco_callback,  # Usar a função importada diretamente
+            pattern=r'^show_endereco_\d+$',
+        )
+    )
+
+    # === HANDLER GLOBAL PARA CANCELAR BUSCA (ANTES DO GENÉRICO) ===
+    # Adicionado para garantir que cancelar_busca funcione globalmente
+    application.add_handler(
+        CallbackQueryHandler(
+            cancelar_busca,  # Usar a função importada diretamente
+            pattern=r'^cancelar_busca$',
+        )
+    )
+
+    # === HANDLER PARA PAGINAÇÃO DE MÚLTIPLOS RESULTADOS ===
+    application.add_handler(
+        CallbackQueryHandler(
+            paginacao_multiplos_callback,
+            pattern=r'^multiplos_pagina_(\d+|info)$',
+        )
+    )
+
+    # === HANDLER PARA SELEÇÃO DE RESULTADO MÚLTIPLO ===
+    application.add_handler(
+        CallbackQueryHandler(
+            selecionar_resultado_multiplo_callback, pattern=r'^select_multi_'
+        )
+    )
+
+    # === HANDLER GERAL DE CALLBACKS (sempre por último!) ===
+    application.add_handler(CallbackQueryHandler(handle_callback))
+
+    # === OUTROS HANDLERS ===
+    application.add_handler(
+        CommandHandler('anotacoes', anotacao.listar_anotacoes_command)
+    )
     application.add_handler(CommandHandler('buscar', busca.buscar_command))
     application.add_handler(CommandHandler('id', busca.buscar_por_id_command))
     application.add_handler(
@@ -151,29 +274,9 @@ def criar_aplicacao() -> Application:
     application.add_handler(
         CommandHandler('localizacao', busca.buscar_por_localizacao_command)
     )
-
-    # Handler para receber localização compartilhada
     application.add_handler(
         MessageHandler(filters.LOCATION, busca.receber_localizacao)
     )
-
-    # Conversa de sugestão
-    application.add_handler(sugestao.get_sugestao_conversation())
-
-    # Conversa de anotação
-    # ESTE DEVE VIR ANTES DO CALLBACKQUERYHANDLER GENÉRICO
-    application.add_handler(anotacao.get_anotacao_conversation())
-
-    # Comando para listar anotações
-    application.add_handler(
-        CommandHandler('anotacoes', anotacao.listar_anotacoes_command)
-    )
-
-    # Callbacks de botões inline
-    # ESTE DEVE VIR DEPOIS DOS CONVERSATIONHANDLERS QUE USAM CALLBACKS
-    application.add_handler(CallbackQueryHandler(handle_callback))
-
-    # Mensagem para comandos desconhecidos
     application.add_handler(
         MessageHandler(filters.COMMAND, comando_desconhecido)
     )
@@ -237,13 +340,19 @@ async def iniciar_bot() -> None:
             # os updates são passados para application.update_queue.
         else:
             logger.info('Iniciando bot usando polling')
+
             await (
                 application.initialize()
             )  # Adicionado para inicialização explícita
             await (
                 application.start()
             )  # Inicia o polling de forma não-bloqueante
-            # application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+            try:
+                # application.run_polling(allowed_updates=Update.ALL_TYPES)
+                pass  # Placeholder - polling será iniciado externamente
+            finally:
+                pass  # Limpeza será feita pela própria persistência
 
     except TelegramError as e:
         logger.error(f'Erro do Telegram ao iniciar bot: {str(e)}')
@@ -255,6 +364,7 @@ async def iniciar_bot() -> None:
 
 if __name__ == '__main__':
     import asyncio
+
     asyncio.run(iniciar_bot())
 
 

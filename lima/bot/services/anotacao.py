@@ -45,7 +45,7 @@ async def criar_anotacao(
         )
         return result, None  # Sucesso: retorna resultado e erro None
     except Exception as e:
-        logger.error(f"Erro ao criar anotação: {str(e)}")
+        logger.error(f'Erro ao criar anotação: {str(e)}')
         return None, str(e)  # Erro: retorna None e mensagem de erro
 
 
@@ -71,6 +71,7 @@ async def listar_anotacoes(
     if id_endereco:
         # Usa o endpoint específico para listar por ID de endereço
         endpoint = f'anotacoes/endereco/{id_endereco}'
+        logger.info(f'Usando endpoint para buscar anotações: {endpoint}')
         # Nenhum parâmetro de consulta é necessário aqui
     elif id_usuario:
         # Se apenas id_usuario é fornecido.
@@ -89,11 +90,16 @@ async def listar_anotacoes(
         # Lista as anotações do usuário logado.
         endpoint = 'anotacoes/usuario/minhas'
     # else:
-        # Se user_id for None e nenhum outro filtro for fornecido,
-        # a chamada irá para GET /anotacoes/ sem user_id.
-        # Isso pode falhar ou requerer tratamento especial no backend.
+    # Se user_id for None e nenhum outro filtro for fornecido,
+    # a chamada irá para GET /anotacoes/ sem user_id.
+    # Isso pode falhar ou requerer tratamento especial no backend.
 
-    return await fazer_requisicao_get(endpoint, params, user_id=user_id)
+    logger.info(
+        f'Fazendo requisição GET para: {endpoint} com params: {params}'
+    )
+    result = await fazer_requisicao_get(endpoint, params, user_id=user_id)
+    logger.info(f'Resultado da requisição de anotações: {result}')
+    return result
 
 
 async def obter_anotacao(
@@ -152,3 +158,26 @@ async def remover_anotacao(
         user_id: ID do usuário do Telegram (opcional) para autenticação.
     """
     await fazer_requisicao_delete(f'anotacoes/{id_anotacao}', user_id=user_id)
+
+
+# Alias para compatibilidade com o novo fluxo V2
+async def listar_anotacoes_por_endereco(
+    id_sistema: int,
+    usuario_id: Optional[int] = None,
+    user_id_telegram: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Lista anotações de um endereço específico.
+    Alias para listar_anotacoes com foco no id_endereco.
+
+    Args:
+        id_sistema: ID do sistema/endereço
+        usuario_id: ID do usuário no sistema interno (não usado atualmente)
+        user_id_telegram: ID do usuário do Telegram para autenticação
+
+    Returns:
+        Lista de anotações do endereço
+    """
+    return await listar_anotacoes(
+        id_endereco=id_sistema, user_id=user_id_telegram
+    )
