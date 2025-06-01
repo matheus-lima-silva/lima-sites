@@ -9,6 +9,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import CallbackQueryHandler, CommandHandler, ContextTypes
 
+from lima.database import get_async_session
+
 from ..formatters.base import escape_markdown
 from ..services.usuario import obter_ou_criar_usuario
 
@@ -185,66 +187,84 @@ async def start_command(
         return
 
     user_id_telegram = user.id
-    telefone_para_registro_e_busca = f'telegram_{user_id_telegram}'
     nome_usuario = user.full_name
+    telefone_para_registro_e_busca = f'telegram_{user_id_telegram}'
 
-    try:
-        # Registrar/atualizar usuário
-        usuario_data = await obter_ou_criar_usuario(
-            telegram_user_id=user_id_telegram,
-            nome=nome_usuario,
-            telefone_id_interno=telefone_para_registro_e_busca,
-        )
-
-        if usuario_data and isinstance(usuario_data, dict):
-            context.user_data['usuario_id'] = usuario_data.get('id')
-        else:
-            logger.error(
-                f'Não foi possível obter/criar usuário para '
-                f'{user_id_telegram} no comando /start. '
-                f'Resposta: {usuario_data}'
+    async with get_async_session() as session:
+        try:
+            usuario_data_tuple = await obter_ou_criar_usuario(
+                telegram_user_id=user_id_telegram,
+                session=session,
+                nome=nome_usuario,
+                telefone=telefone_para_registro_e_busca,
+                # Adicionado parâmetro telefone
             )
+
+            if usuario_data_tuple and isinstance(usuario_data_tuple, tuple):
+                db_usuario = usuario_data_tuple[0]
+                if db_usuario and hasattr(db_usuario, 'id'):
+                    context.user_data['usuario_id'] = db_usuario.id
+                else:
+                    logger.error(
+                        'Não foi possível obter/criar usuário (DBUsuario '
+                        'ausente ou sem ID) para %s no comando /start. '
+                        'Resposta: %s',
+                        user_id_telegram,
+                        usuario_data_tuple,
+                    )
+                    await update.message.reply_text(
+                        'Houve um problema ao configurar sua conta. '
+                        'Por favor, tente /start novamente mais tarde.'
+                    )
+                    return
+            else:
+                logger.error(
+                    'Resposta inesperada de obter_ou_criar_usuario para '
+                    '%s no comando /start. Resposta: %s',
+                    user_id_telegram,
+                    usuario_data_tuple,
+                )
+                await update.message.reply_text(
+                    'Houve um problema ao configurar sua conta. '
+                    'Por favor, tente /start novamente mais tarde.'
+                )
+                return
+
+            context.user_data['user_id_telegram'] = user_id_telegram
+
+            context.user_data.pop('filtros_ativos', None)
+            context.user_data.pop('endereco_atual', None)
+            context.user_data.pop('busca_estado', None)
+
+            nome_formatado = escape_markdown(nome_usuario)
+            usuario_id_str = str(context.user_data['usuario_id'])
+            user_id_telegram_str = str(user_id_telegram)
+
+            mensagem_ola = (
+                f'Olá, {nome_formatado}\\! Bem\\-vindo ao '
+                f'*LimaEndereços*\\.\n\n'
+                f'Seu ID de usuário no sistema é: `{usuario_id_str}`\\.\n'
+                f'Seu ID no Telegram é: `{user_id_telegram_str}`\\.\n\n'
+                f'Use os botões abaixo para navegar:\n'
+            )
+
             await update.message.reply_text(
-                'Houve um problema ao configurar sua conta. '
-                'Por favor, tente /start novamente mais tarde.'
+                mensagem_ola, parse_mode=ParseMode.MARKDOWN_V2
             )
-            return
 
-        context.user_data['user_id_telegram'] = user_id_telegram
+            # Exibir Menu Principal
+            await exibir_menu_principal(update, context)
 
-        # Limpar qualquer estado de conversa anterior
-        context.user_data.pop('filtros_ativos', None)
-        context.user_data.pop('endereco_atual', None)
-        context.user_data.pop('busca_estado', None)
-
-        # Mensagem de boas-vindas
-        nome_formatado = escape_markdown(nome_usuario)
-        usuario_id_str = str(context.user_data['usuario_id'])
-        user_id_telegram_str = str(user_id_telegram)
-
-        mensagem_ola = (
-            f'Olá, {nome_formatado}\\! Bem\\-vindo ao *LimaEndereços*\\.\n\n'
-            f'Seu ID de usuário no sistema é: `{usuario_id_str}`\\.\n'
-            f'Seu ID no Telegram é: `{user_id_telegram_str}`\\.\n\n'
-            f'Use os botões abaixo para navegar:\n'
-        )
-
-        await update.message.reply_text(
-            mensagem_ola, parse_mode=ParseMode.MARKDOWN_V2
-        )
-
-        # Exibir Menu Principal
-        await exibir_menu_principal(update, context)
-
-    except Exception as e:
-        error_log_msg = (
-            f'Erro no comando start para user_id {user_id_telegram}: {str(e)}'
-        )
-        logger.error(error_log_msg)
-        await update.message.reply_text(
-            'Ocorreu um erro ao iniciar o bot. Por favor,'
-            ' tente novamente mais tarde.'
-        )
+        except Exception as e:
+            error_log_msg = (
+                f'Erro no comando start para user_id {user_id_telegram}: '
+                f'{str(e)}'
+            )
+            logger.error(error_log_msg)
+            await update.message.reply_text(
+                'Ocorreu um erro ao iniciar o bot. Por favor,'
+                ' tente novamente mais tarde.'
+            )
 
 
 async def listar_command(
