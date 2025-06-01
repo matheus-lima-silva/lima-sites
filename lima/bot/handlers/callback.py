@@ -49,200 +49,125 @@ async def handle_callback(
     """
     query = update.callback_query
     await query.answer()
-    # Responde ao callback para remover o "carregando" do botão
-
-    callback_data = query.data
-    logger.info(f'Callback recebido: {callback_data}')  # Log para depuração
-
-    try:
-        # Ignora callbacks que são tratados por ConversationHandlers
-        conversation_callbacks = {
-            'tipo_cod_operadora',
-            'tipo_cod_detentora',
-            'tipo_id_sistema',
-            'cancelar_busca',
-            'cancelar_processo_anotacao',
-            'sugest_cancelar_geral',  # Para ConversationHandler de sugestões
-        }
-
-        # Prefixos tratados por ConversationHandlers
-        conversation_prefixes = (
-            'fazer_anotacao_',
-            'anotar_',
-            'finalizar_anotacao_',
-            'cancelar_anotacao_',
-            'select_multi_',
-            'sugest_tipo_',  # Callbacks de tipo de sugestão
-            'sugest_confirmar_',  # Callbacks de confirmação de sugestão
-            'sugerir_',  # Callbacks de iniciar sugestão por endereço
-        )
-
-        # Callbacks específicos de menu (delegados para menu.py)
-        menu_callbacks = {
-            'menu_explorar_base',
-            'menu_minhas_info',
-            'menu_ajuda',
-            'voltar_menu_principal',
-            'explorar_filtrar',
-            'explorar_proximidade',
-            'minhas_anotacoes',
-            'fazer_sugestao',
-        }
-
-        if (
-            any(
-                callback_data.startswith(prefix)
-                for prefix in conversation_prefixes
-            )
-            or callback_data in conversation_callbacks
-            or callback_data in menu_callbacks
-        ):
-            # Estes callbacks são tratados por ConversationHandlers
-            #  ou delegados para módulos específicos
-            logger.debug(
-                f'Callback {callback_data} será tratado pelo '
-                'ConversationHandler ou módulo específico'
-            )
-            return
-
-        if callback_data.startswith('filtro_'):
-            await filtro_callback(update, context)
-        elif callback_data.startswith('pagina_'):
-            await pagina_callback(update, context)
-        elif callback_data.startswith('tipo_'):
-            await tipo_callback(update, context)
-        elif callback_data.startswith('sugestao_'):
-            await sugestao_callback(update, context)
-        elif callback_data.startswith('confirma_'):
-            await confirma_callback(update, context)
-        elif callback_data.startswith('ler_anotacoes_'):  # Novo
-            await ler_anotacoes_callback(update, context)
-        elif callback_data == 'voltar_menu_explorar':
-            # Volta ao menu principal
-            exibir_menu_principal_func = context.application.bot_data.get(
-                'exibir_menu_principal_func'
-            )
-            if exibir_menu_principal_func:
-                await exibir_menu_principal_func(
-                    update, context, editar_mensagem=True
-                )
-            else:
-                logger.error(
-                    'Função exibir_menu_principal_func não encontrada em '
-                    'bot_data.'
-                )
-            return
-        else:
-            logger.warning(f'Callback não reconhecido: {callback_data}')
-    except Exception as e:
-        logger.error(f'Erro ao processar callback {callback_data}: {str(e)}')
-        # Mensagem de erro genérica e mais curta, com escape correto
-        await query.message.reply_text(
-            '😞 Erro ao processar\\. Tente mais tarde\\.'
-        )
-
-
-async def filtro_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """
-    Handler para callbacks de filtro.
-    """
-    query = update.callback_query
-    await query.answer()
-
-    callback_data = query.data
-    # Adicionado para verificar os resultados da busca atual
+    cb_data = query.data  # Renomeado para cb_data para encurtar linhas
     resultados_busca = context.user_data.get('resultados_busca', [])
 
-    # Callbacks que não dependem de resultados
-    #  existentes ou que são para navegação
-    if callback_data == 'mostrar_filtros':
-        # Mostra o teclado com os filtros disponíveis
-        await query.message.reply_text(
-            'Selecione um filtro:', reply_markup=criar_teclado_filtros()
+    conv_cbs = {  # Renomeado para encurtar
+        'cancelar_busca', 'anotacao_cancelar_fluxo', 'sugest_cancelar_geral',
+    }
+    conv_prefixes = (  # Renomeado para encurtar
+        'anotacao_iniciar_id_', 'finalizar_anotacao_', 'select_multi_',
+        'sugest_tipo_', 'sugest_confirmar_', 'sugerir_',
+        'sugestao_endereco_id_',
+    )
+    menu_cbs = {  # Renomeado para encurtar
+        "menu_explorar_base", "menu_minhas_info", "menu_ajuda",
+        "voltar_menu_principal", "explorar_filtrar", "explorar_proximidade",
+        "minhas_anotacoes", "fazer_sugestao",
+    }
+
+    logger.debug(f"[HCB] Raw cb: {repr(cb_data)}")  # HCB = handle_callback
+    logger.debug(f"[HCB] Conv. prefixes: {conv_prefixes}")
+
+    try:
+        is_conv_cb = cb_data in conv_cbs
+        # Corrigido E501: Quebra da linha do gerador
+        is_conv_pref = any(
+            cb_data.startswith(p) for p in conv_prefixes
         )
-        return  # Sai após tratar este callback
+        is_menu_cb = cb_data in menu_cbs
 
-    if callback_data == 'filtro_voltar':
-        # Volta para a busca atual
-        await pagina_callback(update, context)
-        return  # Sai após tratar este callback
+        for idx, p_val in enumerate(conv_prefixes):
+            starts = cb_data.startswith(p_val)
+            logger.debug(f"[HCB] Pfix #{idx}: {repr(p_val)} -> {starts}")
 
-    # Para os demais filtros, verificar se há resultados
-    # Esta verificação agora acontece ANTES de processar os callbacks de filtro
-    if not resultados_busca:  # Modificado para verificar se a lista está vazia
-        # Mensagem informando que a filtragem não está disponível/aplicável
-        await query.message.reply_text(
-            'ℹ️ A filtragem não está disponível pois não há resultados na'
-            ' busca atual.'
+        log_msg_ch = (
+            f"[HCB] Checks: conv_cb={is_conv_cb}, "
+            f"conv_pref={is_conv_pref}, menu_cb={is_menu_cb}"
         )
-        return  # Sai se não houver resultados para filtrar
+        logger.debug(log_msg_ch)
 
-    # Lógica de filtro existente
-    if callback_data == 'filtro_cidade':
-        await query.message.reply_text(
-            'Por favor, digite o nome da cidade que deseja filtrar:'
-        )
-        # Armazena o estado da conversa para pegar a resposta
-        context.user_data['aguardando_input'] = 'cidade'
+        if is_conv_cb or is_conv_pref or is_menu_cb:
+            logger.debug(
+                f"[HCB] Cb {repr(cb_data)} (conv/menu), skip generic."
+            )
+            return
 
-    elif callback_data == 'filtro_cep':
-        await query.message.reply_text(
-            'Por favor, digite o CEP que deseja filtrar:'
-        )
-        context.user_data['aguardando_input'] = 'cep'
+        logger.info(f"[HCB] GENERIC cb: {cb_data}")
 
-    elif callback_data == 'filtro_uf':
-        # Mostra o teclado com as UFs mais comuns
-        await query.message.reply_text(
-            'Selecione uma UF:',
-            reply_markup=criar_teclado_ufs_comuns(),
-        )
+        if cb_data == 'mostrar_filtros':
+            await query.message.reply_text(
+                'Selecione um filtro:', reply_markup=criar_teclado_filtros()
+            )
+            return
 
-    elif callback_data == 'filtro_operadora':
-        # Mostra o teclado com as operadoras mais comuns
-        await query.message.reply_text(
-            'Selecione uma operadora:',
-            reply_markup=criar_teclado_operadoras_comuns(),
-        )
+        if cb_data == 'filtro_voltar':
+            await pagina_callback(update, context)
+            return
 
-    elif callback_data == 'filtro_uf_custom':
-        await query.message.reply_text(
-            'Por favor, digite a UF que deseja filtrar (ex: SP, RJ):'
-        )
-        context.user_data['aguardando_input'] = 'uf'
+        if not resultados_busca:
+            await query.message.reply_text(
+                'ℹ️ Filtragem indisponível (sem resultados na busca atual).'
+            )
+            return
 
-    elif callback_data == 'filtro_operadora_custom':
-        await query.message.reply_text(
-            'Por favor, digite o nome da operadora que deseja filtrar:'
-        )
-        context.user_data['aguardando_input'] = 'operadora'
+        # Lógica de filtro refatorada
+        filter_actions = {
+            'filtro_cidade': lambda: (
+                query.message.reply_text('Digite a cidade para filtrar:'),
+                context.user_data.update({'aguardando_input': 'cidade'})
+            ),
+            'filtro_cep': lambda: (
+                query.message.reply_text('Digite o CEP para filtrar:'),
+                context.user_data.update({'aguardando_input': 'cep'})
+            ),
+            'filtro_uf': lambda: query.message.reply_text(
+                'Selecione uma UF:', reply_markup=criar_teclado_ufs_comuns()
+            ),
+            'filtro_operadora': lambda: query.message.reply_text(
+                'Selecione uma operadora:',
+                reply_markup=criar_teclado_operadoras_comuns(),
+            ),
+            'filtro_uf_custom': lambda: (
+                query.message.reply_text(
+                    'Digite a UF para filtrar (ex: SP, RJ):'
+                ),
+                context.user_data.update({'aguardando_input': 'uf'})
+            ),
+            'filtro_operadora_custom': lambda: (
+                query.message.reply_text(
+                    'Digite a operadora para filtrar:'
+                ),
+                context.user_data.update({'aguardando_input': 'operadora'})
+            ),
+            'filtro_tipo': lambda: query.message.reply_text(
+                'Selecione o tipo de endereço:',
+                reply_markup=criar_teclado_tipos_endereco(),
+            ),
+        }
 
-    elif callback_data.startswith('filtro_uf_'):
-        # Filtros diretos por UF (ex: filtro_uf_SP)
-        uf = callback_data.replace('filtro_uf_', '')
-        await _processar_busca(update, context, params_busca={'uf': uf})
+        action = filter_actions.get(cb_data)
+        if action:
+            await action()  # Executa a ação do dicionário
+        elif cb_data.startswith('filtro_uf_'):
+            uf = cb_data.replace('filtro_uf_', '')
+            await _processar_busca(update, context, params_busca={'uf': uf})
+        elif cb_data.startswith('filtro_op_'):
+            operadora = cb_data.replace('filtro_op_', '')
+            await _processar_busca(
+                update, context, params_busca={'operadora': operadora}
+            )
 
-    elif callback_data == 'filtro_tipo':
-        # Mostra o teclado com os tipos de endereço
-        await query.message.reply_text(
-            'Selecione o tipo de endereço:',
-            reply_markup=criar_teclado_tipos_endereco(),
-        )
-
-    elif callback_data.startswith('filtro_op_'):
-        # Filtros diretos por operadora (ex: filtro_op_CLARO)
-        operadora = callback_data.replace('filtro_op_', '')
-        await _processar_busca(
-            update, context, params_busca={'operadora': operadora}
-        )
-
-    # Não é necessário um 'else' aqui, pois callbacks não reconhecidos
-    # são logados pelo handler geral 'handle_callback'.
-    # Se callback_data não corresponder a nenhum filtro após a
-    # verificação de resultados, nada mais acontece nesta função,
-    # o que é o comportamento esperado.
+    except Exception as e:
+        logger.error(f"[HCB] Erro cb {cb_data}: {e}", exc_info=True)
+        try:
+            await query.message.reply_text(
+                "😕 Erro ao processar. Tente novamente."
+            )
+        except Exception as inner_e:
+            logger.error(
+                f"[HCB] Erro ao enviar msg erro: {inner_e}", exc_info=True
+            )
 
 
 def _preparar_mensagem_pagina(
@@ -388,12 +313,6 @@ async def tipo_callback(
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
-
-    # Removida a verificação de len(resultados_busca) <= 1 pois o teclado
-    # de filtros (que leva a este callback) já não é mostrado para
-    #  <=1 resultado
-    # na função criar_teclado_resultados_combinado.
-    # A verificação acima (if not resultados_busca) é suficiente.
 
     callback_data = query.data
 

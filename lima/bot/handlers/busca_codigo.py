@@ -22,6 +22,8 @@ from telegram.ext import (
     filters,
 )
 
+from lima.database import get_async_session  # Importar get_async_session
+
 from ..formatters.base import escape_markdown
 from ..keyboards import (
     criar_botoes_nenhum_resultado,
@@ -212,15 +214,21 @@ async def _autenticar_usuario_para_busca(
 
     try:
         logger.info(f'Autenticando usuário {user.id} para busca.')
-        dados_usuario_api = await obter_ou_criar_usuario(
-            telegram_user_id=user.id,
-            nome=user.full_name,
-            telefone_id_interno=f'telegram_{user.id}',
-        )
-        if dados_usuario_api and 'error' not in dados_usuario_api:
-            context.user_data['usuario_id'] = dados_usuario_api.get('id')
-            context.user_data['user_id_telegram'] = dados_usuario_api.get(
-                'telegram_user_id', user.id
+        # Obter a sessão do banco de dados usando get_async_session
+        async with get_async_session() as async_session:  # Corrigido
+            dados_usuario_api, _ = await obter_ou_criar_usuario(
+                session=async_session,  # Passando a sessão
+                telegram_user_id=user.id,
+                nome=user.full_name,
+                telefone=f'telegram_{user.id}',
+            )
+
+        # Se for um objeto Usuario
+        if dados_usuario_api and not isinstance(dados_usuario_api, dict):
+            # Acessar atributos diretamente
+            context.user_data['usuario_id'] = dados_usuario_api.id
+            context.user_data['user_id_telegram'] = (
+                dados_usuario_api.telegram_user_id
             )
             logger.info(
                 f'Usuário autenticado para busca: id='
@@ -228,11 +236,26 @@ async def _autenticar_usuario_para_busca(
                 f'telegram_id={context.user_data.get("user_id_telegram")}'
             )
             return True
-        else:
+        # Se dados_usuario_api for um dict (resposta da API antiga ou erro)
+        elif (
+            isinstance(dados_usuario_api, dict)
+            and 'error' not in dados_usuario_api
+        ):
+            context.user_data['usuario_id'] = dados_usuario_api.get('id')
+            context.user_data['user_id_telegram'] = dados_usuario_api.get(
+                'telegram_user_id', user.id
+            )
+            logger.info(
+                f'Usuário autenticado para busca (dict): id='
+                f'{context.user_data.get("usuario_id")}, '
+                f'telegram_id={context.user_data.get("user_id_telegram")}'
+            )
+            return True
+        else:  # Erro ou None
             error_detail = (
                 dados_usuario_api.get('detail', 'Erro desconhecido')
-                if dados_usuario_api
-                else 'Resposta None da API'
+                if isinstance(dados_usuario_api, dict)
+                else 'Resposta None ou inesperada da API'
             )
             logger.error(
                 f'Falha na autenticação para busca (usuário {user.id}): '
@@ -892,7 +915,8 @@ handler_busca_rapida = ConversationHandler(
             iniciar_busca_rapida, pattern='^nova_busca_rapida$'
         ),
     ],
-    per_message=True,
+    per_message=False,
+      # False é correto para ConversationHandlers com MessageHandler
     states={
         SELECIONANDO_TIPO_CODIGO: [
             CallbackQueryHandler(
@@ -914,8 +938,7 @@ handler_busca_rapida = ConversationHandler(
     map_to_parent={  # Se esta conversa for aninhada
         ConversationHandler.END: ConversationHandler.END,
     },
-    allow_reentry=True,
-    name='busca_codigo_conversation',  # Nome para persistência
+    allow_reentry=True,  # Permitir reentrada para casos de cancelamento
 )
 
 

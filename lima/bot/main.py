@@ -19,8 +19,6 @@ from telegram.ext import (
     filters,
 )
 
-from .persistence.api_persistence import ApiPersistence
-
 try:
     from ..settings import Settings  # Importação relativa para uso como módulo
 except ImportError:
@@ -44,8 +42,7 @@ from .handlers import (
     menu,
     sugestao,
 )
-from .handlers.busca_codigo import (  # Adicionado para importar cancelar_busca
-    cancelar_busca,
+from .handlers.busca_codigo import (
     selecionar_resultado_multiplo_callback,
 )
 from .handlers.callback import handle_callback
@@ -130,6 +127,11 @@ def configurar_logging() -> None:
         logging.DEBUG if settings.DEBUG else logging.INFO
     )
 
+    # Configurar o logger para lima.bot.handlers
+    logging.getLogger('lima.bot.handlers').setLevel(
+        logging.DEBUG if settings.DEBUG else logging.INFO
+    )
+
 
 def criar_aplicacao() -> Application:
     """
@@ -148,14 +150,11 @@ def criar_aplicacao() -> Application:
         )
         sys.exit(1)
 
-    # Cria aplicação com persistência no banco de dados
+    # Cria aplicação sem persistência
     try:
-        # Usar nova persistência baseada em API REST
-        persistence = ApiPersistence()
         application = (
             Application.builder()
             .token(TOKEN_BOT)
-            .persistence(persistence)
             .build()
         )
     except Exception as e:
@@ -216,7 +215,7 @@ def criar_aplicacao() -> Application:
         CallbackQueryHandler(
             ver_todas_anotacoes_callback,
             # Usar a função importada diretamente
-            pattern=r'^ver_anotacoes_\d+$',
+            pattern=r'^ver_anotacoes_endereco_id_\d+$',
         )
     )
 
@@ -228,14 +227,9 @@ def criar_aplicacao() -> Application:
         )
     )
 
-    # === HANDLER GLOBAL PARA CANCELAR BUSCA (ANTES DO GENÉRICO) ===
-    # Adicionado para garantir que cancelar_busca funcione globalmente
-    application.add_handler(
-        CallbackQueryHandler(
-            cancelar_busca,  # Usar a função importada diretamente
-            pattern=r'^cancelar_busca$',
-        )
-    )
+    # === HANDLER GLOBAL PARA CANCELAR BUSCA REMOVIDO ===
+    # O cancelar_busca já é tratado pelo ConversationHandler de busca_codigo
+    # Remover handler duplicado para evitar conflitos
 
     # === HANDLER PARA PAGINAÇÃO DE MÚLTIPLOS RESULTADOS ===
     application.add_handler(
