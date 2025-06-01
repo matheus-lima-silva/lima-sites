@@ -6,10 +6,8 @@ from typing import Annotated, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ....database import get_async_session
 from ....models import (
     Alteracao,
     Anotacao,
@@ -29,17 +27,18 @@ from ....schemas import (
     EnderecoUpdate,
 )
 from ....security import (
-    get_current_user,
     require_intermediario,
     require_super_usuario,
+)
+from ....utils.dependencies import (
+    AsyncSessionDep,
+    CurrentUserDep,
 )
 from ..utils import endereco_to_schema, filtrar_anotacoes_por_acesso
 
 router = APIRouter()
 
 # Definições de dependências usando Annotated
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
-CurrentUserDep = Annotated[Usuario, Depends(get_current_user)]
 IntermediarioUserDep = Annotated[Usuario, Depends(require_intermediario)]
 SuperUserDep = Annotated[Usuario, Depends(require_super_usuario)]
 
