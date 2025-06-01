@@ -8,6 +8,8 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
+from lima.database import get_async_session  # Adicionado
+
 from ..formatters.base import escape_markdown
 from ..services.usuario import obter_ou_criar_usuario
 
@@ -39,27 +41,30 @@ async def start_command(
     try:
         # obter_ou_criar_usuario agora espera:
         # - telegram_user_id: int
-        #  (para o campo telegram_user_id no payload da API)
-        # - nome: Optional[str] (para o campo nome no payload da API)
-        # - telefone_id_interno:
-        # str (para buscar/identificar, ex: "telegram_123")
-        # - user_id_telegram_para_get:
-        #  int (para autenticar chamadas GET internas se necessário)
+        # - nome: Optional[str]
+        # - telefone: Optional[str] (anteriormente telefone_id_interno)
+        # - session: AsyncSession (novo)
+        # O parâmetro user_id_telegram_para_get foi removido.
 
-        usuario_data = await obter_ou_criar_usuario(
-            telegram_user_id=user_id_telegram,
-            nome=nome_usuario,
-            telefone_id_interno=telefone_para_registro_e_busca,
-            user_id_telegram_para_get=user_id_telegram,
-        )
+        db_user, access_token = (None, None)  # Inicializa as variáveis
+        async with get_async_session() as session:  # Corrigido
+            db_user, access_token = await obter_ou_criar_usuario(
+                session=session,
+                telegram_user_id=user_id_telegram,
+                nome=nome_usuario,
+                telefone=telefone_para_registro_e_busca,
+            )
 
-        if usuario_data and isinstance(usuario_data, dict):
-            context.user_data['usuario_id'] = usuario_data.get('id')
+        if db_user:  # Checa se db_user não é None
+            context.user_data['usuario_id'] = db_user.id
+            # O token de acesso pode ser armazenado se necessário para
+            # chamadas de API subsequentes
+            context.user_data['access_token'] = access_token
         else:
             logger.error(
                 f'Não foi possível obter/criar usuário para '
                 f'{user_id_telegram} no comando /start. '
-                f'Resposta: {usuario_data}'
+                f'Resposta: db_user={db_user}, access_token={access_token}'
             )
             await update.message.reply_text(
                 'Houve um problema ao configurar sua conta. '
