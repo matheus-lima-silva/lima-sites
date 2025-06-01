@@ -9,10 +9,59 @@ from typing import Optional, Tuple
 from telegram import CallbackQuery, Update
 from telegram.ext import ContextTypes
 
+from lima.database import get_async_session  # Adicionado
+
+from ..api_client import fazer_requisicao_get
 from ..formatters.base import escape_markdown
-from .usuario import obter_ou_criar_usuario, obter_usuario_por_telegram_id
+from .usuario import (
+    obter_ou_criar_usuario,
+)
 
 logger = logging.getLogger(__name__)
+
+
+async def _autenticar_e_atualizar_contexto(
+    telegram_user_id: int,
+    nome_completo: str,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> Tuple[Optional[dict], Optional[str]]:
+    """
+    Chama a API para obter/criar usuário e atualiza o contexto.
+    Retorna (dados_usuario_api, None) em sucesso, ou
+      (None, error_detail) em falha.
+    """
+    try:
+        # Usa get_async_session para obter uma sessão
+        async with get_async_session() as session:  # Corrigido
+            dados_usuario_api, access_token = await obter_ou_criar_usuario(
+                session=session,  # Passa a sessão para a função
+                telegram_user_id=telegram_user_id,
+                nome=nome_completo,
+                telefone=f'telegram_{telegram_user_id}',  # Corrigido
+            )
+
+        if dados_usuario_api:  # É o objeto Usuario ou None
+            context.user_data['usuario_id'] = dados_usuario_api.id
+            context.user_data['user_id_telegram'] = (
+                dados_usuario_api.telegram_user_id  # Acesso direto
+            )
+            # Token de acesso pode ser armazenado
+            context.user_data['access_token'] = access_token
+            return dados_usuario_api, None  # Retorna Usuario e None (erro)
+        else:
+            # Se dados_usuario_api for None, houve problema
+            error_detail = 'obter_ou_criar_usuario retornou None'
+            logger.error(
+                f'Falha em _autenticar_e_atualizar_contexto para '
+                f'user {telegram_user_id}: {error_detail}'
+            )
+            return None, error_detail
+    except Exception as e:
+        logger.error(
+            f'Exceção durante _autenticar_e_atualizar_contexto para '
+            f'user {telegram_user_id}: {e}'
+        )
+        return None, str(e)
 
 
 # =====================================================
@@ -87,39 +136,25 @@ async def reautenticar_usuario_se_necessario(
             f'Re-autenticando usuário {user.id} em '
             f'reautenticar_usuario_se_necessario.'
         )
-        try:
-            dados_usuario_api = await obter_ou_criar_usuario(
+        dados_usuario_api, error_detail = (
+            await _autenticar_e_atualizar_contexto(
                 telegram_user_id=user.id,
-                nome=user.full_name,
-                telefone_id_interno=f'telegram_{user.id}',
+                nome_completo=user.full_name,
+                context=context,
             )
-            if dados_usuario_api and 'error' not in dados_usuario_api:
-                context.user_data['usuario_id'] = dados_usuario_api.get('id')
-                context.user_data['user_id_telegram'] = dados_usuario_api.get(
-                    'telegram_user_id', user.id
-                )
-                return True  # Autenticação bem-sucedida
-            else:
-                error_detail = (
-                    dados_usuario_api.get('detail', 'Erro desconhecido')
-                    if dados_usuario_api
-                    else 'Resposta None da API'
-                )
-                logger.error(f'Falha na re-autenticação: {error_detail}')
-                if query and query.message:
-                    await query.message.reply_text(
-                        f'Falha na autenticação: {
-                            escape_markdown(error_detail)
-                        }.'
-                    )
-                return False  # Falha na autenticação
-        except Exception as e:
-            logger.error(f'Exceção durante re-autenticação: {e}')
+        )
+
+        if dados_usuario_api:
+            return True  # Autenticação bem-sucedida
+        else:
+            logger.error(f'Falha na re-autenticação: {error_detail}')
             if query and query.message:
                 await query.message.reply_text(
-                    'Erro inesperado de autenticação ao selecionar resultado.'
+                    f'Falha na autenticação: {
+                        escape_markdown(error_detail or "Erro desconhecido")
+                    }.'
                 )
-            return False
+            return False  # Falha na autenticação
     return True  # Usuário já estava autenticado
 
 
@@ -157,78 +192,80 @@ async def autenticar_e_preparar_contexto_comando(
         return int(usuario_id), int(user_id_telegram)
 
     # Autentica o usuário
-    try:
-        dados_usuario_api = await obter_ou_criar_usuario(
-            telegram_user_id=user.id,
-            nome=user.full_name,
-            telefone_id_interno=f'telegram_{user.id}',
+    dados_usuario_api, error_detail = await _autenticar_e_atualizar_contexto(
+        telegram_user_id=user.id,
+        nome_completo=user.full_name,
+        context=context,
+    )
+
+    if dados_usuario_api:
+        # Os dados já foram salvos no contexto pela função auxiliar
+        return int(context.user_data['usuario_id']), int(
+            context.user_data['user_id_telegram']
         )
-
-        if dados_usuario_api and 'error' not in dados_usuario_api:
-            usuario_id = dados_usuario_api.get('id')
-            user_id_telegram = dados_usuario_api.get(
-                'telegram_user_id', user.id
-            )
-
-            # Salva no contexto
-            context.user_data['usuario_id'] = usuario_id
-            context.user_data['user_id_telegram'] = user_id_telegram
-
-            return int(usuario_id), int(user_id_telegram)
-        else:
-            error_detail = (
-                dados_usuario_api.get('detail', 'Erro desconhecido')
-                if dados_usuario_api
-                else 'Resposta None da API'
-            )
-            logger.error(f'Falha na autenticação do comando: {error_detail}')
-            if update.effective_message:
-                await update.effective_message.reply_text(
-                    'Falha na autenticação. Tente novamente com /start.'
-                )
-            return None, None
-
-    except Exception as e:
-        logger.error(f'Exceção durante autenticação do comando: {e}')
+    else:
+        logger.error(f'Falha na autenticação do comando: {error_detail}')
         if update.effective_message:
             await update.effective_message.reply_text(
-                'Erro inesperado de autenticação.'
+                'Falha na autenticação. Tente novamente com /start.'
             )
         return None, None
 
 
 async def obter_nivel_acesso_usuario(usuario_id: int) -> str:
     """
-    Obtém o nível de acesso de um usuário.
+    Obtém o nível de acesso de um usuário da API.
+    Usa o telegram_user_id para autenticar a requisição para /usuarios/me.
 
     Args:
-        usuario_id: ID do usuário
+        usuario_id: ID do usuário do Telegram.
 
     Returns:
-        Nível de acesso ('basico', 'intermediario', 'super_usuario')
+        Nível de acesso do usuário (ex: "básico", "intermediário", "avançado")
+        ou "desconhecido".
     """
+    log_prefix = f'Usuário {usuario_id} via /usuarios/me:'
     try:
-        # Busca dados do usuário pela API
-        dados_usuario = await obter_usuario_por_telegram_id(
-            telegram_user_id=usuario_id, user_id=usuario_id
+        # O usuario_id aqui é o telegram_user_id,
+        # usado para autenticar a chamada para /usuarios/me
+        # Não precisamos de user_name ou expected_phone para /usuarios/me
+        # pois o token já identifica o usuário.
+        dados_usuario = await fazer_requisicao_get(
+            'usuarios/me', user_id=usuario_id
         )
 
-        if dados_usuario and isinstance(dados_usuario, dict):
-            nivel_acesso = dados_usuario.get('nivel_acesso', 'basico')
-            logger.debug(
-                f'Nível de acesso obtido para usuário {usuario_id}: {
-                    nivel_acesso
-                }'
+        if dados_usuario:
+            if 'nivel_acesso' in dados_usuario:
+                nivel = dados_usuario['nivel_acesso']
+                logger.info(f'{log_prefix} Nível de acesso: {nivel}')
+                return nivel
+            logger.warning(
+                f'{log_prefix} Campo "nivel_acesso" não encontrado. '
+                f'Dados: {dados_usuario}'
             )
-            return nivel_acesso
         else:
             logger.warning(
-                f'Dados de usuário não encontrados para ID {usuario_id}'
+                f'{log_prefix} Não foi possível obter dados. '
+                f'Resposta None ou vazia.'
             )
-            return 'basico'  # Nível padrão
 
+    except (PermissionError, ConnectionError) as e:
+        logger.error(
+            f'{log_prefix} Erro de rede/permissão ao obter nível de '
+            f'acesso: {e}'
+        )
     except Exception as e:
         logger.error(
-            f'Erro ao obter nível de acesso para usuário {usuario_id}: {e}'
+            f'{log_prefix} Erro inesperado ao obter nível de acesso: {e}'
         )
-        return 'basico'  # Nível padrão em caso de erro
+        # Logar o traceback para depuração mais detalhada em caso de erros
+        # inesperados
+        logger.exception(
+            f'{log_prefix} Traceback do erro:'
+        )
+
+    return 'desconhecido'
+
+
+async def verificar_acesso_avancado():
+    pass
