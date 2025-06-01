@@ -3,12 +3,16 @@ Serviço para gerenciamento de endereços.
 """
 
 import logging
-from dataclasses import dataclass  # Removido field, adicionado dataclass
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from ...cache import cached, get_query_cache  # Alterado e corrigido
 from ..api_client import fazer_requisicao_get, fazer_requisicao_post
 
 logger = logging.getLogger(__name__)
+
+# Instanciar o cache de queries para uso com o decorador @cached ou diretamente
+query_cache = get_query_cache()  # Alterado e corrigido
 
 
 @dataclass
@@ -27,6 +31,7 @@ class FiltrosEndereco:
     limite: int = 10
 
 
+@cached(query_cache)  # Adicionado decorador
 async def buscar_endereco(
     filtros: FiltrosEndereco,
     id_endereco: Optional[int] = None,
@@ -87,6 +92,8 @@ async def registrar_busca(
 ) -> Dict[str, Any]:
     """
     Registra uma busca no histórico.
+    Esta função realiza uma operação de escrita (POST), então não deve ser
+    cacheada.
 
     Args:
         id_usuario: ID do usuário que realizou a busca.
@@ -106,6 +113,7 @@ async def registrar_busca(
     return await fazer_requisicao_post('buscas/', data, user_id=user_id)
 
 
+@cached(query_cache)  # Adicionado decorador
 async def buscar_por_coordenadas(
     latitude: float,
     longitude: float,
@@ -134,6 +142,7 @@ async def buscar_por_coordenadas(
     )
 
 
+@cached(query_cache)  # Adicionado decorador
 async def obter_detentoras(
     user_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
@@ -150,6 +159,7 @@ async def obter_detentoras(
     return await fazer_requisicao_get('detentoras/', user_id=user_id)
 
 
+@cached(query_cache)  # Adicionado decorador
 async def obter_operadoras(
     user_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
@@ -166,6 +176,7 @@ async def obter_operadoras(
     return await fazer_requisicao_get('operadoras/', user_id=user_id)
 
 
+@cached(query_cache)  # Adicionado decorador
 async def buscar_por_operadora(
     codigo_operadora: str,
     limite: int = 10,
