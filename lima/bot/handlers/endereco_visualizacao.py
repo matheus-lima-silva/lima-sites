@@ -332,7 +332,7 @@ async def ver_todas_anotacoes_callback(
 
     # Extrai o id_sistema do callback
     try:
-        id_sistema = int(query.data.replace('ver_anotacoes_', ''))
+        id_sistema = int(query.data.replace('ver_anotacoes_endereco_id_', ''))
     except Exception:
         await query.edit_message_text('ID do endereço inválido.')
         return
