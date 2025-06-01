@@ -3,287 +3,396 @@ Serviço para gerenciamento de usuários.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
-from ..api_client import (
-    fazer_requisicao_get,
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# Importar funções específicas de api_client
+from lima.bot.api_client import (
     fazer_requisicao_post,
     fazer_requisicao_put,
 )
-from .token_service import token_manager
+from lima.bot.services.token_service import token_manager
+from lima.cache import get_user_cache
+from lima.models import Usuario as DBUsuario
 
 logger = logging.getLogger(__name__)
+USER_CACHE = get_user_cache()
 
 
-def _armazenar_token_usuario(access_token: str) -> None:
-    """
-    Armazena token de acesso no TokenManager
-    """
-    token_manager.set_token(access_token)
+async def _armazenar_token_usuario(access_token: str, user_id: int):
+    """Armazena o token JWT no cache de tokens."""
+    if not access_token:
+        logger.warning('Tentativa de armazenar um token vazio.')
+        return
+    await token_manager.set_token(access_token, user_id=user_id)
+    logger.info(f'Token JWT armazenado para o usuário ID: {user_id}')
+
+
+async def _registrar_usuario_via_api(
+    data: dict[str, Any],
+    bot_id: int | None = None,
+    user_name: str | None = None,
+) -> dict[str, Any] | None:
+    """Registra o usuário através da API externa."""
+    try:
+        response_data = await fazer_requisicao_post(
+            'auth/telegram/register',
+            data_json=data,
+            bot_id=bot_id,
+            user_name=user_name,
+        )
+        return response_data
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f'Erro HTTP ao registrar usuário via API: {
+                e.response.status_code
+            } - '
+            f'{e.response.text}'
+        )
+        return None
+    except httpx.RequestError as e:
+        logger.error(f'Erro de requisição ao registrar usuário via API: {e}')
+        return None
 
 
 async def obter_usuario_por_telefone(
-    telefone: str,
-    user_id: Optional[int] = None,  # Adicionado
-    user_name: Optional[str] = None,
-    expected_phone: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    Busca um usuário pelo número de telefone.
+    telefone: str, session: AsyncSession
+) -> DBUsuario | None:
+    """Busca um usuário pelo número de telefone no banco de dados."""
+    cached_user = await USER_CACHE.get('user', telefone)
+    if cached_user:
+        logger.info(f'Usuário encontrado no cache para o telefone: {telefone}')
+        return cached_user
 
-    Args:
-        telefone: Número de telefone do usuário.
-        user_id: ID do usuário do Telegram para autenticação (opcional).
-        user_name: Nome do usuário do Telegram.
-        expected_phone: Telefone esperado para o usuário.
+    usuario_encontrado = await DBUsuario.get_by_phone(session, telefone)
+    if usuario_encontrado:
+        logger.info(f'Usuário encontrado no DB para o telefone: {telefone}')
+        await USER_CACHE.set('user', telefone, usuario_encontrado)
+    return usuario_encontrado
 
-    Returns:
-        Dados do usuário ou None se não encontrado.
-    """
-    params = {'telefone': telefone}
-    # Passa user_id; se None, o api_client tratará
-    # (não enviando o header de auth)
-    # A resposta da API /usuarios/?telefone=... pode ser um objeto único ou
-    # uma lista.
-    # Se for um objeto único e o usuário não existir, a API pode retornar 404,
-    # que fazer_requisicao_get pode transformar em None.
-    # Se for uma lista, pode ser uma lista vazia.
-    logger.info(
-        f'DEBUG: obter_usuario_por_telefone chamando fazer_requisicao_get com:'
-        f'user_id={user_id}, user_name={user_name}, expected_phone={
-            expected_phone
-        }'
+
+async def obter_usuario_por_id_telegram(
+    telegram_user_id: int, session: AsyncSession
+) -> DBUsuario | None:
+    """Busca um usuário pelo ID do Telegram no banco de dados."""
+    cache_key_identifier = f'telegram_id_{telegram_user_id}'
+    cached_user = await USER_CACHE.get('user', cache_key_identifier)
+    if cached_user:
+        logger.info(
+            f'Usuário encontrado no cache para o telegram_id: {
+                telegram_user_id
+            }'
+        )
+        return cached_user
+
+    usuario_encontrado = await DBUsuario.get_by_telegram_id(
+        session, telegram_user_id
     )
-    response_data = await fazer_requisicao_get(
-        'usuarios/',
-        params,
-        user_id=user_id,
-        user_name=user_name,
-        expected_phone=expected_phone,
-    )
-
-    if isinstance(response_data, list):
-        if response_data:  # Se a lista não estiver vazia
-            return response_data[0]  # Retorna o primeiro usuário da lista
-    elif isinstance(response_data, dict):  # Se for um único objeto/dict
-        # Verifica se o dicionário não está vazio (pode ser um usuário válido)
-        if response_data:  # Garante que o dicionário não seja vazio
-            return response_data
-
-    # Se response_data for None, ou lista vazia, ou dict vazio, ou outro tipo
-    return None
+    if usuario_encontrado:
+        logger.info(
+            f'Usuário encontrado no DB para o telegram_id: {telegram_user_id}'
+        )
+        await USER_CACHE.set('user', cache_key_identifier, usuario_encontrado)
+    return usuario_encontrado
 
 
-async def criar_usuario(
+async def criar_ou_atualizar_usuario_local(
+    session: AsyncSession,
     telegram_user_id: int,
-    nome: Optional[str] = None,
-    telefone_para_api: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Cria um novo usuário através do endpoint de registro do Telegram.
-    Retorna a resposta completa da API, que deve incluir o access_token.
-    """
-    data = {
-        'telegram_user_id': telegram_user_id,
-    }
-
+    nome: str | None = None,
+    telefone: str | None = None,  # Renomeado de phone_number
+    api_response_data: dict[str, Any] | None = None,
+) -> DBUsuario | None:
+    """Cria ou atualiza um usuário no banco de dados local."""
+    db_user = await DBUsuario.get_by_telegram_id(session, telegram_user_id)
+    user_data: dict[str, Any] = {'telegram_id': telegram_user_id}
     if nome:
-        data['nome'] = nome
+        user_data['nome_telegram'] = nome
+    if telefone:  # Usando o novo nome do parâmetro
+        # Atribuição permanece para a coluna 'telefone'
+        user_data['telefone'] = telefone
 
-    if telefone_para_api:
-        data['phone_number'] = telefone_para_api
+    if api_response_data:
+        user_data['id_usuario_api'] = api_response_data.get('id_usuario')
+        user_data['nome_api'] = api_response_data.get('name')
 
-    log_msg = (
-        f'Registrando novo usuário via API: '
-        f'telegram_user_id={telegram_user_id}, nome={nome}, '
-        f'telefone_para_api={telefone_para_api}'
-    )
-    logger.info(log_msg)
-    # Retorna a resposta completa da API, que esperamos que contenha o token
-    response_data = await fazer_requisicao_post('auth/telegram/register', data)
-    return response_data
-
-
-async def atualizar_ultimo_acesso(
-    id_alvo_usuario: int, user_id_auth: int
-) -> Dict[str, Any]:
-    """
-    Atualiza o timestamp de último acesso do usuário.
-
-    Args:
-        id_alvo_usuario: ID do usuário cujo último acesso será atualizado.
-        user_id_auth: ID do usuário do Telegram realizando a ação
-                      (para autenticação).
-
-    Returns:
-        Usuário atualizado ou dicionário de erro.
-    """
-    logger.info(
-        f'Tentando atualizar último acesso para usuário ID: {id_alvo_usuario} '
-        f'(autenticado como user_id: {user_id_auth})'
-    )
-
-    try:
-        usuario_data = await fazer_requisicao_get(
-            f'usuarios/{id_alvo_usuario}', user_id=user_id_auth
+    if db_user:
+        await db_user.update(session, **user_data)
+        logger.info(
+            f'Usuário local atualizado: telegram_id={telegram_user_id}'
         )
+        cache_key_telegram_id = f'telegram_id_{telegram_user_id}'
+        await USER_CACHE.delete('user', cache_key_telegram_id)
+        if telefone:  # Usando o novo nome do parâmetro
+            await USER_CACHE.delete('user', telefone)
+        return db_user
 
-        if not usuario_data:
-            warning_msg = (
-                f'Usuário ID {id_alvo_usuario} não encontrado (GET) ao tentar '
-                f'atualizar último acesso. Autenticado como {user_id_auth}.'
-            )
-            logger.warning(warning_msg)
-            return {
-                'error': f'Usuário {id_alvo_usuario} não encontrado via GET',
-                'status_code': 404,
-            }
-
-        return await fazer_requisicao_put(
-            f'usuarios/{id_alvo_usuario}',
-            data=usuario_data,
-            user_id=user_id_auth,
-        )
-
-    except Exception as e:
-        error_msg = (
-            'Erro ao atualizar último acesso para '
-            f'usuário ID {id_alvo_usuario} '
-            f'(autenticado como {user_id_auth}): {str(e)}'
-        )
-        logger.error(error_msg)
-        return {'error': 'Falha ao atualizar último acesso', 'detail': str(e)}
+    novo_usuario = await DBUsuario.create(session, **user_data)
+    logger.info(f'Novo usuário local criado: telegram_id={telegram_user_id}')
+    return novo_usuario
 
 
-async def obter_usuario_por_telegram_id(
+async def _handle_existing_user(
+    db_user: DBUsuario,
     telegram_user_id: int,
-    user_id: Optional[int] = None,
-    user_name: Optional[str] = None,
-    expected_phone: Optional[str] = None,
-) -> Optional[Dict[str, Any]]:
-    """
-    Busca um usuário pelo telegram_user_id.
-    """
-    params = {'telegram_user_id': telegram_user_id}
+    nome: str | None,
+    telefone: str | None,  # Renomeado de phone_number
+    session: AsyncSession,
+) -> str | None:
+    """Lida com a lógica de um usuário existente."""
     logger.info(
-        'DEBUG: obter_usuario_por_telegram_id chamando fazer_requisicao_get'
-        ' com: '
-        f'user_id={user_id}, user_name={user_name}, '
-        f'expected_phone={expected_phone}'
+        f'Usuário {telegram_user_id} encontrado no banco de dados local.'
     )
-    response_data = await fazer_requisicao_get(
-        'usuarios/',
-        params,
-        user_id=user_id,
-        user_name=user_name,
-        expected_phone=expected_phone,
+    access_token = await token_manager.get_token(user_id=telegram_user_id)
+    if access_token:
+        logger.info(
+            f'Token encontrado no cache para o usuário {telegram_user_id}.'
+        )
+    else:
+        logger.info(
+            f'Nenhum token válido no cache para o usuário {telegram_user_id}.'
+        )
+
+    update_fields = {}
+    if nome and db_user.nome_telegram != nome:
+        update_fields['nome_telegram'] = nome
+    # Usando o novo nome do parâmetro
+    if telefone and db_user.telefone != telefone:
+        # Atribuição permanece para a coluna 'telefone'
+        update_fields['telefone'] = telefone
+
+    if update_fields:
+        await db_user.update(session, **update_fields)
+        logger.info(
+            f'Informações locais do usuário {telegram_user_id} atualizadas.'
+        )
+        cache_key_telegram_id = f'telegram_id_{telegram_user_id}'
+        await USER_CACHE.delete('user', cache_key_telegram_id)
+        if db_user.telefone:  # Usa o telefone do db_user para invalidar
+            await USER_CACHE.delete('user', db_user.telefone)
+    return access_token
+
+
+async def _handle_new_user_registration(
+    telegram_user_id: int,
+    nome: str | None,
+    telefone: str | None,  # Renomeado de phone_number
+    session: AsyncSession,
+) -> tuple[DBUsuario | None, str | None]:
+    """Lida com o registro de um novo usuário."""
+    logger.info(
+        f'Usuário {telegram_user_id} não encontrado localmente. '
+        'Tentando registro via API.'
+    )
+    api_registration_data: dict[str, Any] = {'telegram_id': telegram_user_id}
+    if nome:
+        api_registration_data['name'] = nome
+    if telefone:  # Usando o novo nome do parâmetro
+        # API externa ainda pode esperar 'phone_number'
+        api_registration_data['phone_number'] = telefone
+
+    response_data = await _registrar_usuario_via_api(
+        api_registration_data,
+        bot_id=telegram_user_id,  # Passa telegram_user_id como bot_id
+        user_name=nome,  # Passa nome como user_name
+    )
+    access_token: str | None = None
+    if response_data and 'access_token' in response_data:
+        access_token = response_data['access_token']
+        await _armazenar_token_usuario(access_token, telegram_user_id)
+        logger.info(
+            f'Token obtido e armazenado para o usuário com telegram_id '
+            f'{telegram_user_id}.'
+        )
+    else:
+        logger.warning(
+            f'Nenhum token de acesso retornado pela API para o usuário com '
+            f'telegram_id {telegram_user_id}.'
+        )
+
+    db_user = await criar_ou_atualizar_usuario_local(
+        session,
+        telegram_user_id,
+        nome,
+        telefone,  # Passando o novo nome do parâmetro
+        response_data,
     )
 
-    if isinstance(response_data, list):
-        # Filtra exatamente pelo telegram_user_id
-        for usuario in response_data:
-            if str(usuario.get('telegram_user_id')) == str(telegram_user_id):
-                return usuario
-        # Se não encontrar, retorna o primeiro como fallback
-        if response_data:
-            return response_data[0]
-    elif isinstance(response_data, dict):
-        if response_data:
-            return response_data
-    return None
+    if db_user:
+        cache_key_telegram_id = f'telegram_id_{telegram_user_id}'
+        await USER_CACHE.set('user', cache_key_telegram_id, db_user)
+        if db_user.telefone:
+            await USER_CACHE.set('user', db_user.telefone, db_user)
+        logger.info(
+            f'Usuário {telegram_user_id} salvo/atualizado no DB local.'
+        )
+    else:
+        logger.error(
+            f'Falha ao salvar o usuário {telegram_user_id} no DB local.'
+        )
+    return db_user, access_token
 
 
 async def obter_ou_criar_usuario(
     telegram_user_id: int,
-    nome: Optional[str],
-    telefone_id_interno: str,  # Ex: "telegram_12345"
-) -> Dict[str, Any]:
+    session: AsyncSession,
+    nome: str | None = None,
+    telefone: str | None = None,  # Renomeado de phone_number
+) -> tuple[DBUsuario | None, str | None]:
     """
-    Garante que um usuário exista/seja criado/atualizado via API.
+    Obtém um usuário existente ou cria um novo.
+    Retorna DBUsuario e token de acesso.
+    """
+    db_user = await obter_usuario_por_id_telegram(telegram_user_id, session)
 
-    Primeiro, chama /auth/telegram/register para criar/atualizar o usuário
-    (incluindo nome, telefone, last_seen) e obter o token.
-    Depois, busca e retorna os dados completos do usuário.
-    """
-    try:
+    if db_user:
+        access_token = await _handle_existing_user(
+            db_user, telegram_user_id, nome, telefone, session
+              # Passando o novo nome
+        )
+        return db_user, access_token
+
+    return await _handle_new_user_registration(
+        telegram_user_id, nome, telefone, session
+    )
+
+
+async def remover_usuario_local(
+    id_alvo_usuario: int, session: AsyncSession
+) -> bool:
+    """Remove um usuário do DB local e cache (por telegram_id)."""
+    usuario_a_remover = await DBUsuario.get_by_telegram_id(
+        session, id_alvo_usuario
+    )
+
+    if not usuario_a_remover:
+        logger.warning(
+            f'Usuário local não encontrado para remoção: '
+            f'telegram_id={id_alvo_usuario}'
+        )
+        return False
+
+    telefone_usuario = usuario_a_remover.telefone
+    id_primario_db = getattr(usuario_a_remover, 'id', None)
+
+    if not isinstance(id_primario_db, int):
+        logger.error(
+            f'ID primário inválido para remoção: {id_primario_db}, '
+            f'telegram_id={id_alvo_usuario}'
+        )
+        return False
+
+    removido_do_db = await DBUsuario.delete(session, id_primario_db)
+
+    if removido_do_db:
         logger.info(
-            f'Processando obter_ou_criar_usuario para telegram_id: '
-            f'{telegram_user_id}, nome: {nome}, '
-            f'telefone_id_interno: {telefone_id_interno}'
+            f'Usuário local removido do DB: id_primario={id_primario_db}, '
+            f'telegram_id={id_alvo_usuario}'
         )
-        # Etapa 1: Chamar criar_usuario (endpoint /auth/telegram/register).
-        # Isso lida com a criação ou atualização (nome, phone_number,
-        # last_seen) e retorna os dados da API, incluindo o token.
-        dados_registro = await criar_usuario(
-            telegram_user_id=telegram_user_id,
-            nome=nome,
-            telefone_para_api=telefone_id_interno,
+        cache_key_telegram_id = f'telegram_id_{id_alvo_usuario}'
+        await USER_CACHE.delete('user', cache_key_telegram_id)
+        logger.debug(f'Cache invalidado para: {cache_key_telegram_id}')
+
+        if telefone_usuario:
+            await USER_CACHE.delete('user', telefone_usuario)
+            logger.debug(f'Cache invalidado para telefone: {telefone_usuario}')
+        return True
+
+    logger.error(
+        f'Falha ao remover usuário do DB: id_primario={id_primario_db}, '
+        f'telegram_id={id_alvo_usuario}'
+    )
+    return False
+
+
+async def atualizar_dados_usuario_api(
+    telegram_user_id: int,
+    # Se 'telefone' estiver aqui, precisa ser mapeado para 'phone_number'
+    # se a API externa esperar isso.
+    novos_dados: dict[str, Any],
+    session: AsyncSession,
+) -> DBUsuario | None:
+    """Atualiza os dados de um usuário na API e localmente."""
+    db_user = await obter_usuario_por_id_telegram(telegram_user_id, session)
+    if not db_user or not getattr(db_user, 'id_usuario_api', None):
+        logger.warning(
+            f'Usuário com telegram_id {telegram_user_id} não encontrado '
+            'localmente ou sem id_usuario_api para atualização na API.'
+        )
+        return None
+
+    try:
+        url = f'users/{db_user.id_usuario_api}'
+        usuario_atualizado_api = await fazer_requisicao_put(
+            url,
+            data_json=novos_dados,
+            bot_id=telegram_user_id,
+            user_name=db_user.nome_telegram or db_user.nome_api,
         )
 
-        if dados_registro and isinstance(dados_registro, dict):
-            access_token = dados_registro.get('access_token')
+        if not usuario_atualizado_api:
+            logger.error(
+                f'Falha ao atualizar usuário na API: '
+                f'id_api={db_user.id_usuario_api}'
+            )
+            return None
 
-            if access_token:
-                # Armazena token usando instância local para evitar ciclo
-                _armazenar_token_usuario(access_token)
-                logger.info('Token de acesso armazenado no TokenManager.')
-            else:
-                logger.warning(
-                    "Resposta de criar_usuario não continha 'access_token'."
+        logger.info(
+            f'Usuário atualizado na API: id_api={db_user.id_usuario_api}'
+        )
+
+        update_data_local = {
+            'nome_api': usuario_atualizado_api.get('name', db_user.nome_api),
+            # API retorna 'phone_number', mapeia para 'telefone' local
+            'telefone': usuario_atualizado_api.get(
+                'phone_number', db_user.telefone
+            ),
+        }
+        # Aqui 'telefone' é o atributo do modelo
+        telefone_antigo = db_user.telefone
+        await db_user.update(session, **update_data_local)
+
+        cache_key_telegram_id = f'telegram_id_{telegram_user_id}'
+        await USER_CACHE.delete('user', cache_key_telegram_id)
+
+        if telefone_antigo:
+            await USER_CACHE.delete('user', telefone_antigo)
+
+        # Aqui 'telefone' é a chave do dict
+        novo_telefone = update_data_local.get('telefone')
+        if novo_telefone and novo_telefone != telefone_antigo:
+            await USER_CACHE.delete('user', novo_telefone)
+
+        usuario_para_cache = await DBUsuario.get_by_telegram_id(
+            session, telegram_user_id
+        )
+        if usuario_para_cache:
+            await USER_CACHE.set(
+                'user', cache_key_telegram_id, usuario_para_cache
+            )
+            if usuario_para_cache.telefone:
+                await USER_CACHE.set(
+                    'user', usuario_para_cache.telefone, usuario_para_cache
                 )
 
-        else:
-            logger.error(
-                f'Falha ao registrar/logar usuário {telegram_user_id} '
-                f'via criar_usuario. Resposta: {dados_registro}'
-            )
-            return {
-                'error': 'Falha na etapa de registro/login do usuário.',
-                'detail': (
-                    f'Resposta inesperada de criar_usuario: {dados_registro}'
-                ),
-                'status_code': 500,
-            }
-
-        # Etapa 2: Buscar os dados completos do usuário usando /usuarios/me.
-        # Este endpoint permite que usuários básicos acessem próprios dados.
-        # O token para telegram_user_id já deve estar no token_manager.
         logger.info(
-            'Buscando dados do usuário atual usando endpoint /usuarios/me '
-            'após registro/atualização. Telegram_user_id: %s',
-            telegram_user_id,
+            f'Usuário local atualizado após sincronização com API: '
+            f'telegram_id={telegram_user_id}'
         )
-        usuario_completo = await fazer_requisicao_get(
-            'usuarios/me',
-            user_id=telegram_user_id,
-            user_name=nome,
-            expected_phone=telefone_id_interno,
-        )
+        return await obter_usuario_por_id_telegram(telegram_user_id, session)
 
-        if not usuario_completo:
-            logger.error(
-                f'Falha ao obter usuário ({telefone_id_interno}) após '
-                f'registro/atualização (aparentemente bem-sucedido).'
-            )
-            return {
-                'error': 'Falha ao recuperar usuário pós criação/atualização.',
-                'detail': f'Usuário {telefone_id_interno} não encontrado.',
-                'status_code': 500,
-            }
-
-        logger.info(
-            f'Usuário completo obtido para {telefone_id_interno}: '
-            f'{usuario_completo}'
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        text = e.response.text
+        logger.error(
+            f'Erro HTTP ao atualizar usuário na API: {status_code} - {text}'
         )
-        return usuario_completo
+        return None
+    except httpx.RequestError as e:
+        logger.error(f'Erro de requisição ao atualizar usuário na API: {e}')
+        return None
 
-    except Exception as e:
-        logger.exception(
-            f'Erro em obter_ou_criar_usuario para telegram_id: '
-            f'{telegram_user_id}. Erro: {e}'
-        )
-        return {
-            'error': 'Erro inesperado ao obter ou criar usuário.',
-            'detail': str(e),
-            'status_code': 500,
-        }
+
+# Adicione aqui outras funções de serviço relacionadas ao usuário.
