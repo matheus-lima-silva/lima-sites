@@ -1,23 +1,35 @@
+import dataclasses
+import logging
 from datetime import datetime
 from enum import Enum
+from typing import Any, ClassVar, Optional
+from typing import Set as TypingSet
 
 from sqlalchemy import (
     BigInteger,
-    DateTime,  # Adicionado DateTime
+    DateTime,
     ForeignKey,
-    Index,  # Adicionado Index
-    Text,  # Adicionado para armazenar JSON
+    Index,
+    Text,
     func,
+    select,
 )
-from sqlalchemy.orm import Mapped, mapped_column, registry, relationship
+from sqlalchemy import update as sqlalchemy_update_stmt
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import (
+    Mapped,
+    load_only,
+    mapped_column,
+    registry,
+    relationship,
+)
 
 from .database import utcnow
 
-# Registry para SQLAlchemy 2.x
 table_registry = registry()
+logger = logging.getLogger(__name__)
 
 
-# Enums
 class NivelAcesso(str, Enum):
     basico = 'basico'
     intermediario = 'intermediario'
@@ -29,15 +41,13 @@ class TipoEndereco(str, Enum):
     rooftop = 'rooftop'
     shopping = 'shopping'
     indoor = 'indoor'
-    cow = 'cow'  # Cell On Wheels
+    cow = 'cow'
     fastsite = 'fastsite'
     outdoor = 'outdoor'
     harmonizada = 'harmonizada'
-    ran_sharing = 'ran_sharing'  # Alterado de 'ran sharing' para 'ran_sharing'
-    street_level = (
-        'street_level'  # Alterado de 'street level' para 'street_level'
-    )
-    small_cell = 'small_cell'  # Alterado de 'small cell' para 'small_cell'
+    ran_sharing = 'ran_sharing'
+    street_level = 'street_level'
+    small_cell = 'small_cell'
 
 
 class TipoSugestao(str, Enum):
@@ -66,50 +76,274 @@ class TipoBusca(str, Enum):
     por_logradouro = 'por_logradouro'
     por_cep = 'por_cep'
     por_coordenadas = 'por_coordenadas'
-    listagem = 'listagem'  # Adicionando este valor
+    listagem = 'listagem'
 
 
-# MODELS
 @table_registry.mapped_as_dataclass
 class Usuario:
     __tablename__ = 'usuarios'
 
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
-    email: Mapped[str | None] = mapped_column(
+    email: Mapped[Optional[str]] = mapped_column(
         unique=True, nullable=True, index=True, default=None
-    )  # Adicionado para login
-    telegram_user_id: Mapped[int | None] = mapped_column(
+    )
+    telegram_user_id: Mapped[Optional[int]] = mapped_column(
         BigInteger, unique=True, nullable=True, index=True, default=None
-    )  # Adicionado para ID do Telegram, agora como BigInteger
-    telefone: Mapped[str | None] = mapped_column(
+    )
+    telefone: Mapped[Optional[str]] = mapped_column(
         unique=False, default=None, nullable=True
-    )  # Garante que nullable=True seja explícito
+    )
     nivel_acesso: Mapped[NivelAcesso] = mapped_column(
         default=NivelAcesso.basico
     )
-    nome: Mapped[str | None] = mapped_column(default=None)
+    nome: Mapped[Optional[str]] = mapped_column(
+        Text, default=None, nullable=True
+    )
+    nome_telegram: Mapped[Optional[str]] = mapped_column(
+        Text, default=None, nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), init=False, server_default=func.now()
     )
     last_seen: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), init=False, server_default=func.now()
+        DateTime(timezone=True),
+        init=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
+    nome_api: Optional[str] = dataclasses.field(
+        default=None, init=False, repr=False
+    )
+    id_usuario_api: Optional[int] = dataclasses.field(
+        default=None, init=False, repr=False
+    )
+
+    _COLUNAS_PERSISTIDAS_NO_BD: ClassVar[TypingSet[str]] = {
+        'id',
+        'email',
+        'telegram_user_id',
+        'telefone',
+        'nivel_acesso',
+        'nome',
+        'nome_telegram',
+        'created_at',
+        'last_seen',
+    }
+    _COLUNAS_INIT_PERSISTIVEIS: ClassVar[TypingSet[str]] = {
+        'email',
+        'telegram_user_id',
+        'telefone',
+        'nivel_acesso',
+        'nome',
+        'nome_telegram',
+    }
+    _COLUNAS_INIT_VIRTUAIS: ClassVar[TypingSet[str]] = {
+        'nome_api',
+        'id_usuario_api',
+    }
+
     buscas: Mapped[list['Busca']] = relationship(
-        init=False, back_populates='usuario', lazy='selectin'
+        init=False,
+        back_populates='usuario',
+        lazy='selectin',
+        cascade='all, delete-orphan',
     )
     sugestoes: Mapped[list['Sugestao']] = relationship(
-        init=False, back_populates='usuario', lazy='selectin'
+        init=False,
+        back_populates='usuario',
+        lazy='selectin',
+        cascade='all, delete-orphan',
     )
     alteracoes: Mapped[list['Alteracao']] = relationship(
-        init=False, back_populates='usuario', lazy='selectin'
+        init=False,
+        back_populates='usuario',
+        lazy='selectin',
+        cascade='all, delete-orphan',
     )
     anotacoes: Mapped[list['Anotacao']] = relationship(
-        init=False, back_populates='usuario', lazy='selectin'
+        init=False,
+        back_populates='usuario',
+        lazy='selectin',
+        cascade='all, delete-orphan',
     )
     busca_logs: Mapped[list['BuscaLog']] = relationship(
-        init=False, back_populates='usuario', lazy='selectin'
+        init=False,
+        back_populates='usuario',
+        lazy='selectin',
+        cascade='all, delete-orphan',
     )
+
+    def __post_init__(self) -> None:
+        if not hasattr(self, 'nome_api'):  # pragma: no cover
+            self.nome_api = None
+        if not hasattr(self, 'id_usuario_api'):  # pragma: no cover
+            self.id_usuario_api = None
+
+    @classmethod
+    async def get_by_telegram_id(
+        cls, session: AsyncSession, telegram_user_id: int
+    ) -> Optional['Usuario']:
+        cols_to_load = [
+            getattr(cls, col_name)
+            for col_name in cls._COLUNAS_PERSISTIDAS_NO_BD
+            if hasattr(cls, col_name)
+            and col_name not in cls._COLUNAS_INIT_VIRTUAIS
+        ]
+        stmt = (
+            select(cls)
+            .options(load_only(*cols_to_load))
+            .where(cls.telegram_user_id == telegram_user_id)
+        )
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        return user
+
+    @classmethod
+    async def get_by_phone(
+        cls, session: AsyncSession, phone_number: str
+    ) -> Optional['Usuario']:  # Corrigido tipo de retorno faltando aspas
+        cols_to_load = [
+            getattr(cls, col_name)
+            for col_name in cls._COLUNAS_PERSISTIDAS_NO_BD
+            if hasattr(cls, col_name)
+            and col_name not in cls._COLUNAS_INIT_VIRTUAIS
+        ]
+        stmt = (
+            select(cls)
+            .options(load_only(*cols_to_load))
+            .where(cls.telefone == phone_number)
+        )
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+        return user
+
+    @classmethod
+    async def create(cls, session: AsyncSession, **kwargs: Any) -> 'Usuario':
+        init_kwargs_for_constructor = {}
+        for col_name in cls._COLUNAS_INIT_PERSISTIVEIS:
+            if col_name in kwargs:
+                init_kwargs_for_constructor[col_name] = kwargs[col_name]
+
+        if init_kwargs_for_constructor.get('nome') is None:
+            nome_fallback = init_kwargs_for_constructor.get(
+                'nome_telegram', kwargs.get('nome_api')
+            )
+            if nome_fallback is not None:
+                init_kwargs_for_constructor['nome'] = nome_fallback
+
+        if (
+            'nivel_acesso' in init_kwargs_for_constructor
+            and init_kwargs_for_constructor['nivel_acesso'] is None
+            and cls.nivel_acesso.default is not None
+        ):
+            del init_kwargs_for_constructor['nivel_acesso']
+
+        db_user = cls(**init_kwargs_for_constructor)
+
+        if 'nome_api' in kwargs:
+            db_user.nome_api = kwargs['nome_api']
+        if 'id_usuario_api' in kwargs:
+            db_user.id_usuario_api = kwargs['id_usuario_api']
+
+        session.add(db_user)
+        try:
+            await session.flush()
+            await session.refresh(db_user)
+        except Exception as e:
+            logger.error(f'Erro ao criar usuário no BD: {e}', exc_info=True)
+            await session.rollback()
+            raise
+        return db_user
+
+    async def update(self, session: AsyncSession, **kwargs: Any) -> None:
+        db_update_values = {}
+        instance_attrs_changed = False
+
+        for key in self._COLUNAS_PERSISTIDAS_NO_BD - {'id', 'created_at'}:
+            if key in kwargs:
+                val = kwargs[key]
+                if getattr(self, key, None) != val:
+                    setattr(self, key, val)
+                    db_update_values[key] = val
+                    instance_attrs_changed = True
+
+        for key in self._COLUNAS_INIT_VIRTUAIS:
+            if key in kwargs:
+                if getattr(self, key, None) != kwargs[key]:
+                    setattr(self, key, kwargs[key])
+                    instance_attrs_changed = True
+
+        nome_explicitamente_atualizado = 'nome' in db_update_values
+
+        if not nome_explicitamente_atualizado:
+            novo_nome_candidato = None
+            if 'nome_telegram' in db_update_values:
+                novo_nome_candidato = db_update_values['nome_telegram']
+            elif 'nome_api' in kwargs and self.nome_api != kwargs['nome_api']:
+                novo_nome_candidato = kwargs['nome_api']
+            elif 'nome_api' in kwargs and self.nome is None:
+                novo_nome_candidato = kwargs['nome_api']
+
+            if (
+                novo_nome_candidato is not None
+                and self.nome != novo_nome_candidato
+            ):
+                setattr(self, 'nome', novo_nome_candidato)
+                db_update_values['nome'] = novo_nome_candidato
+
+        for key in kwargs:
+            if (
+                key not in self._COLUNAS_PERSISTIDAS_NO_BD
+                and key not in self._COLUNAS_INIT_VIRTUAIS
+            ):
+                logger.warning(
+                    f"Tentativa de atualizar atributo desconhecido ou não "
+                    f"diretamente atualizável '{{{key}}}' em Usuario "
+                    f"(id: {self.id})."
+                )
+
+        if db_update_values:
+            db_update_values.setdefault('last_seen', func.now())
+            stmt = (
+                sqlalchemy_update_stmt(Usuario)
+                .where(Usuario.id == self.id)
+                .values(**db_update_values)
+                .execution_options(synchronize_session='fetch')
+            )
+            try:
+                await session.execute(stmt)
+                await session.flush()
+            except Exception as e:
+                logger.error(
+                    f'Erro ao atualizar usuário no BD (id: {self.id}): {e}',
+                    exc_info=True,
+                )
+                await session.rollback()
+                raise
+        elif instance_attrs_changed:
+            logger.info(
+                f'Atributos da instância Usuario (id: {self.id}) atualizados, '
+                f'sem alterações diretas no BD nesta operação específica.'
+            )
+
+    @classmethod
+    async def delete(cls, session: AsyncSession, user_id: int) -> bool:
+        user_to_delete = await session.get(cls, user_id)
+        if user_to_delete:
+            try:
+                await session.delete(user_to_delete)
+                await session.flush()
+                return True
+            except Exception as e:
+                logger.error(
+                    f'Erro ao deletar usuário (id: {user_id}): {e}',
+                    exc_info=True,
+                )
+                await session.rollback()
+                raise
+        return False
 
 
 @table_registry.mapped_as_dataclass
@@ -117,27 +351,23 @@ class Endereco:
     __tablename__ = 'enderecos'
 
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
-    codigo_endereco: Mapped[str] = mapped_column(
-        unique=True
-    )  # Identificador alfanumérico externo (ex: "rnit08")
+    codigo_endereco: Mapped[str] = mapped_column(unique=True)
     uf: Mapped[str]
     municipio: Mapped[str]
     bairro: Mapped[str]
     logradouro: Mapped[str]
-    tipo: Mapped[TipoEndereco | None] = mapped_column(
-        default=None
-    )  # Alterado para permitir valores nulos
-    detentora_id: Mapped[int | None] = mapped_column(
-        ForeignKey('detentoras.id'), default=None
+    tipo: Mapped[Optional[TipoEndereco]] = mapped_column(
+        default=None, nullable=True
     )
-    numero: Mapped[str | None] = mapped_column(default=None)
-    complemento: Mapped[str | None] = mapped_column(default=None)
-    cep: Mapped[str | None] = mapped_column(default=None)
-    latitude: Mapped[float | None] = mapped_column(default=None)
-    longitude: Mapped[float | None] = mapped_column(default=None)
-    compartilhado: Mapped[bool] = mapped_column(
-        default=False
-    )  # Campo adicionado para corresponder ao banco de dados
+    detentora_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey('detentoras.id'), default=None, nullable=True
+    )
+    numero: Mapped[Optional[str]] = mapped_column(default=None)
+    complemento: Mapped[Optional[str]] = mapped_column(default=None)
+    cep: Mapped[Optional[str]] = mapped_column(default=None)
+    latitude: Mapped[Optional[float]] = mapped_column(default=None)
+    longitude: Mapped[Optional[float]] = mapped_column(default=None)
+    compartilhado: Mapped[bool] = mapped_column(default=False)
 
     buscas: Mapped[list['Busca']] = relationship(
         init=False, back_populates='endereco', lazy='selectin'
@@ -151,7 +381,7 @@ class Endereco:
     anotacoes: Mapped[list['Anotacao']] = relationship(
         init=False, back_populates='endereco', lazy='selectin'
     )
-    detentora: Mapped['Detentora | None'] = relationship(
+    detentora: Mapped[Optional['Detentora']] = relationship(
         init=False, back_populates='enderecos', lazy='selectin'
     )
     operadoras: Mapped[list['EnderecoOperadora']] = relationship(
@@ -166,7 +396,7 @@ class Busca:
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
     id_endereco: Mapped[int] = mapped_column(ForeignKey('enderecos.id'))
     id_usuario: Mapped[int] = mapped_column(ForeignKey('usuarios.id'))
-    info_adicional: Mapped[str | None] = mapped_column(default=None)
+    info_adicional: Mapped[Optional[str]] = mapped_column(default=None)
     data_busca: Mapped[datetime] = mapped_column(
         init=False, default_factory=utcnow, server_default=func.now()
     )
@@ -189,15 +419,15 @@ class Sugestao:
     status: Mapped[StatusSugestao] = mapped_column(
         default=StatusSugestao.pendente
     )
-    id_endereco: Mapped[int | None] = mapped_column(
-        ForeignKey('enderecos.id'), default=None
+    id_endereco: Mapped[Optional[int]] = mapped_column(
+        ForeignKey('enderecos.id'), default=None, nullable=True
     )
-    detalhe: Mapped[str | None] = mapped_column(default=None)
+    detalhe: Mapped[Optional[str]] = mapped_column(default=None)
     data_sugestao: Mapped[datetime] = mapped_column(
         init=False, default_factory=utcnow, server_default=func.now()
     )
 
-    endereco: Mapped['Endereco | None'] = relationship(
+    endereco: Mapped[Optional['Endereco']] = relationship(
         init=False, back_populates='sugestoes', lazy='selectin'
     )
     usuario: Mapped['Usuario'] = relationship(
@@ -213,7 +443,7 @@ class Alteracao:
     id_endereco: Mapped[int] = mapped_column(ForeignKey('enderecos.id'))
     id_usuario: Mapped[int] = mapped_column(ForeignKey('usuarios.id'))
     tipo_alteracao: Mapped[TipoAlteracao]
-    detalhe: Mapped[str | None] = mapped_column(default=None)
+    detalhe: Mapped[Optional[str]] = mapped_column(default=None)
     data_alteracao: Mapped[datetime] = mapped_column(
         init=False, default_factory=utcnow, server_default=func.now()
     )
@@ -263,7 +493,7 @@ class BuscaLog:
     tipo_busca: Mapped[TipoBusca]
     data_hora: Mapped[datetime] = mapped_column(
         init=False,
-        default_factory=utcnow,  # Agora usando a função utcnow corrigida
+        default_factory=utcnow,
         server_default=func.now(),
     )
 
@@ -320,52 +550,31 @@ class EnderecoOperadora:
 class ConversationState:
     """
     Modelo para persistir estados de conversação do bot Telegram.
-
-    Substitui o PicklePersistence, oferecendo melhor escalabilidade,
-    consistência e auditoria para estados de conversação. Armazena:
-    - Estados de conversação por handler
-    - Dados do usuário (user_data)
-    - Dados do chat (chat_data)
-    - Dados do bot (bot_data)
-    - Callbacks aguardando resposta
     """
 
     __tablename__ = 'conversation_states'
 
-    # Chave primária
     id: Mapped[int] = mapped_column(init=False, primary_key=True)
-
-    # Identificadores únicos - Compatível com PTB
-    user_id: Mapped[int | None] = mapped_column(
+    user_id: Mapped[Optional[int]] = mapped_column(
         BigInteger, index=True, nullable=True
-    )  # PTB user_id
-    chat_id: Mapped[int | None] = mapped_column(
+    )
+    chat_id: Mapped[Optional[int]] = mapped_column(
         BigInteger, index=True, nullable=True
-    )  # PTB chat_id
-
-    # Tipo de dados persistidos
+    )
     data_type: Mapped[str] = mapped_column(
         index=True,
-        comment='Tipo: user_data, chat_data, bot_data,'
-        ' conversation, callback_data',
+        comment='Tipo: user_data, chat_data, bot_data, conversation, '
+        'callback_data',  # Quebra de linha para comprimento
     )
-
-    # Nome da conversação (para conversation handlers)
-    conversation_name: Mapped[str | None] = mapped_column(
+    conversation_name: Mapped[Optional[str]] = mapped_column(
         nullable=True, index=True, comment='Nome do ConversationHandler'
     )
-
-    # Estado da conversação (para conversation handlers)
-    state: Mapped[str | None] = mapped_column(
+    state: Mapped[Optional[str]] = mapped_column(
         nullable=True, comment='Estado atual da conversação'
     )
-
-    # Dados serializados em JSON
     data: Mapped[str] = mapped_column(
         Text, comment='Dados serializados em JSON'
     )
-
-    # Timestamps para auditoria
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), init=False, server_default=func.now()
     )
@@ -376,18 +585,14 @@ class ConversationState:
         onupdate=func.now(),
     )
 
-    # Índices compostos para buscas eficientes
     __table_args__ = (
-        # Índice para buscar por tipo de dados
         Index('ix_conversation_states_data_type', 'data_type'),
-        # Índice para buscar conversações específicas
         Index(
             'ix_conversation_states_conversation',
             'conversation_name',
             'user_id',
             'chat_id',
         ),
-        # Índice para buscar dados de usuário/chat
         Index(
             'ix_conversation_states_user_chat',
             'user_id',
@@ -395,6 +600,7 @@ class ConversationState:
             'data_type',
         ),
         {
-            'comment': 'Estados de conversação do bot Telegram - Compatível com PTB'
+            'comment': 'Estados de conversação do bot Telegram - '
+            'Compatível com PTB'  # Quebra de linha
         },
     )
