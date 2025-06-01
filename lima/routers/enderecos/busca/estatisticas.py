@@ -2,26 +2,20 @@
 Estatísticas relacionadas a endereços.
 """
 
-from typing import Annotated, Dict
+from typing import Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....database import get_async_session
 from ....models import (
     Endereco,
     EnderecoOperadora,
     Operadora,
-    Usuario,
 )
-from ....security import get_current_user
+from ....utils.dependencies import AsyncSessionDep, CurrentUserDep
 
 router = APIRouter()
-
-# Definições de dependências usando Annotated
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
-CurrentUserDep = Annotated[Usuario, Depends(get_current_user)]
 
 
 async def _get_total_enderecos(session: AsyncSession) -> int:
