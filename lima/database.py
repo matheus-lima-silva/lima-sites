@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
@@ -53,6 +54,7 @@ def utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+@asynccontextmanager  # Adicionado decorador
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """Dependency para FastAPI: retorna uma sessão assíncrona."""
     session = async_session()
