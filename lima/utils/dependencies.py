@@ -5,7 +5,8 @@ Este módulo centraliza as dependências comuns usadas nos diferentes routers
 da aplicação, evitando duplicação de código.
 """
 
-from typing import Annotated, Optional
+# Dependências comuns do banco de dados
+from typing import Annotated, AsyncGenerator, Optional
 
 from fastapi import Depends, Path, Query
 from pydantic import BaseModel
@@ -26,8 +27,14 @@ from ..security import (
     require_super_usuario,
 )
 
-# Dependências comuns do banco de dados
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
+
+async def get_session_dependency() -> AsyncGenerator[AsyncSession, None]:
+    """Dependência que fornece uma sessão do banco de dados."""
+    async with get_async_session() as session:
+        yield session
+
+
+AsyncSessionDep = Annotated[AsyncSession, Depends(get_session_dependency)]
 
 # USER_LOAD_OPTIONS foi movido para core.loading_options.py
 # e é importado acima para garantir que esteja no contexto quando necessário.
