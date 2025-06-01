@@ -1,5 +1,4 @@
 import logging
-from typing import Annotated
 
 from fastapi import (
     APIRouter,
@@ -10,7 +9,6 @@ from fastapi import (
     status,
 )
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update as PTBUpdate  # Movido para o topo
 
 from lima.bot.main import obter_aplicacao  # Funções do Bot
@@ -32,8 +30,7 @@ router = APIRouter(prefix='/auth', tags=['auth'])
 
 @router.post('/login', response_model=Token)
 async def login_for_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    session: Annotated[AsyncSession, Depends(get_async_session)],
+    form_data: OAuth2PasswordRequestForm = Depends(),
 ):
     # Esta rota é para login de usuário padrão com email/senha.
     # A função authenticate_user original precisaria ser adaptada ou
@@ -67,7 +64,6 @@ async def login_for_access_token(
 async def register_telegram_user_via_api(
     payload: TelegramUserRegistrationRequest,
     # Alterado para receber o payload no corpo da requisição
-    session: Annotated[AsyncSession, Depends(get_async_session)],
 ):
     """
     Registra ou obtém um usuário com base no ID do Telegram.
@@ -79,12 +75,13 @@ async def register_telegram_user_via_api(
             detail='telegram_user_id é obrigatório.',
         )
 
-    user_db = await get_or_create_user_by_telegram_id(  # Corrigido
-        session=session,
-        telegram_user_id=payload.telegram_user_id,
-        expected_phone=payload.phone_number,  # Adicionado expected_phone
-        name=payload.nome,
-    )
+    async with get_async_session() as session:
+        user_db = await get_or_create_user_by_telegram_id(  # Corrigido
+            session=session,
+            telegram_user_id=payload.telegram_user_id,
+            expected_phone=payload.phone_number,  # Adicionado expected_phone
+            name=payload.nome,
+        )
 
     if not user_db:
         detail_msg = (
@@ -118,7 +115,7 @@ async def register_telegram_user_via_api(
 @router.post('/telegram/webhook')  # Removida a barra final
 async def telegram_webhook(
     request: Request,  # Usar Request para obter o corpo raw
-    x_telegram_bot_api_secret_token: Annotated[str | None, Header()] = None,
+    x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ):
     """
     Endpoint de webhook para o Telegram.
