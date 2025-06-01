@@ -7,19 +7,17 @@ from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from ....database import get_async_session
 from ....models import (
     BuscaLog,
     TipoBusca,
     Usuario,
 )
 from ....security import require_super_usuario
+from ....utils.dependencies import AsyncSessionDep
 
 router = APIRouter()
 
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
 SuperUserDep = Annotated[Usuario, Depends(require_super_usuario)]
 
 
