@@ -10,7 +10,6 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ....database import get_async_session
 from ....models import (
     BuscaLog,
     Endereco,
@@ -20,13 +19,9 @@ from ....models import (
     Usuario,
 )
 from ....schemas import EnderecoRead
-from ....security import get_current_user
+from ....utils.dependencies import AsyncSessionDep, CurrentUserDep
 
 router = APIRouter()
-
-# Definições de dependências usando Annotated
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
-CurrentUserDep = Annotated[Usuario, Depends(get_current_user)]
 
 
 class EnderecoFilterParams(BaseModel):
@@ -48,7 +43,9 @@ class EnderecoFilterParams(BaseModel):
     limit: int = Field(default=100, description='Número máximo de registros')
 
 
-EnderecoFilterParamsDep = Annotated[EnderecoFilterParams, Depends()]
+EnderecoFilterParamsDep = Annotated[
+    EnderecoFilterParams, Depends(EnderecoFilterParams)
+]
 
 
 @router.get('/', response_model=List[EnderecoRead])
