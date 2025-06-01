@@ -29,13 +29,9 @@ from ....schemas import (
     EnderecoReadComplete,
     OperadoraRead,
 )
-from ....security import get_current_user
+from ....utils.dependencies import AsyncSessionDep, CurrentUserDep
 
 router = APIRouter()
-
-# Definições de dependências usando Annotated
-AsyncSessionDep = Annotated[AsyncSession, Depends(get_async_session)]
-CurrentUserDep = Annotated[Usuario, Depends(get_current_user)]
 
 
 def load_relations_query(
@@ -144,6 +140,27 @@ def _criar_endereco_basico(endereco: Endereco) -> EnderecoRead:
     )
 
 
+async def _formatar_operadoras_endereco(
+    operadoras_endereco: List[EnderecoOperadora],
+) -> List[OperadoraRead]:
+    """Formata os dados das operadoras para a resposta."""
+    operadoras_formatadas = []
+    if operadoras_endereco:
+        for eo in operadoras_endereco:
+            if eo.operadora:  # Checa se operadora existe
+                # TODO: Revisar o schema OperadoraRead, pois codigo_operadora
+                # não parece pertencer a ele.
+                # No entanto, mantendo a lógica original por enquanto.
+                op_data = {
+                    "id": eo.operadora.id,
+                    "codigo": eo.operadora.codigo,
+                    "nome": eo.operadora.nome,
+                    "codigo_operadora": eo.codigo_operadora,
+                }
+                operadoras_formatadas.append(OperadoraRead(**op_data))
+    return operadoras_formatadas
+
+
 @router.get('/por-codigo/{codigo_endereco}')
 async def buscar_por_codigo(
     codigo_endereco: str,
@@ -229,105 +246,100 @@ async def buscar_por_codigo(
 )
 async def buscar_por_operadora(
     codigo_operadora: str,
-    session: AsyncSessionDep,
     current_user: CurrentUserDep,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
     logger = logging.getLogger(__name__)
-    try:
-        logger.info(
-            f'Buscando por operadora: {codigo_operadora}, '
-            f'skip: {skip}, limit: {limit}'
-        )
-        stmt = (
-            select(Endereco)
-            .join(Endereco.operadoras)
-            # Junta Endereco com EnderecoOperadora (através do relacionamento 'operadoras')
-            .where(
-                EnderecoOperadora.codigo_operadora.ilike(
-                    f'%{codigo_operadora}%'
-                )
-            )  # MODIFICADO AQUI
-            .offset(skip)
-            .limit(limit)
-            .options(
-                selectinload(Endereco.operadoras).selectinload(
-                    EnderecoOperadora.operadora
-                ),
-                # Mantemos o selectinload para carregar os dados da operadora
-                selectinload(Endereco.detentora),
-                selectinload(Endereco.anotacoes).selectinload(
-                    Anotacao.usuario
-                ),
+    async with get_async_session() as session:
+        try:
+            logger.info(
+                f'Buscando por operadora: {codigo_operadora}, '
+                f'skip: {skip}, limit: {limit}'
             )
-            .distinct()
-        )
-
-        db_result = await session.scalars(stmt)
-        enderecos = list(db_result.all())  # Usar .all() para obter a lista
-
-        await _registrar_busca(
-            session,
-            current_user.id,
-            endpoint='/enderecos/por-operadora/{codigo_operadora}',
-            parametros=f'codigo_operadora={codigo_operadora},skip={skip},limit={limit}',
-            tipo_busca=TipoBusca.por_operadora,
-        )
-
-        resultados_finais = []
-        for end_item in enderecos:
-            base_data = _criar_endereco_basico(end_item).model_dump()
-            operadoras_formatadas = []
-            if end_item.operadoras:
-                for eo in end_item.operadoras:
-                    if eo.operadora:  # Checa se operadora existe
-                        operadoras_formatadas.append(
-                            OperadoraRead(
-                                id=eo.operadora.id,
-                                codigo=eo.operadora.codigo,
-                                nome=eo.operadora.nome,
-                                codigo_operadora=eo.codigo_operadora,
-                            )
-                        )
-
-            detentora_formatada = None
-            if end_item.detentora:
-                detentora_formatada = DetentoraRead.model_validate(
-                    end_item.detentora
+            stmt = (
+                select(Endereco)
+                .join(Endereco.operadoras)
+                # Junta Endereco com EnderecoOperadora
+                # (através do relacionamento 'operadoras')
+                .where(
+                    EnderecoOperadora.codigo_operadora.ilike(
+                        f'%{codigo_operadora}%'
+                    )
+                )  # MODIFICADO AQUI
+                .offset(skip)
+                .limit(limit)
+                .options(
+                    selectinload(Endereco.operadoras).selectinload(
+                        EnderecoOperadora.operadora
+                    ),
+                    # Mantemos o selectinload para carregar os dados
+                    # da operadora
+                    selectinload(Endereco.detentora),
+                    selectinload(Endereco.anotacoes).selectinload(
+                        Anotacao.usuario
+                    ),
                 )
-
-            anotacoes_formatadas = await _processar_anotacoes(
-                end_item, current_user
+                .distinct()
             )
 
-            resultados_finais.append(
-                EnderecoReadComplete(
-                    **base_data,
-                    operadoras=operadoras_formatadas,
-                    detentora=detentora_formatada,
-                    anotacoes=anotacoes_formatadas,
-                )
+            db_result = await session.scalars(stmt)
+            enderecos = list(db_result.all())  # Usar .all() para obter a lista
+
+            await _registrar_busca(
+                session,
+                current_user.id,
+                endpoint='/enderecos/por-operadora/{codigo_operadora}',
+                parametros=f'codigo_operadora={codigo_operadora},skip={skip},limit={limit}',
+                tipo_busca=TipoBusca.por_operadora,
             )
 
-        await session.commit()
-        return resultados_finais
+            resultados_finais = []
+            for end_item in enderecos:
+                base_data = _criar_endereco_basico(end_item).model_dump()
 
-    except AttributeError as e:
-        logger.error(
-            f'Erro de atributo em buscar_por_operadora: {e}', exc_info=True
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Erro ao processar dados do usuário.',
-        )
-    except Exception as e:
-        logger.error(f'Erro em buscar_por_operadora: {e}', exc_info=True)
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Erro interno ao buscar endereços por operadora.',
-        )
+                # Utiliza a nova função auxiliar
+                operadoras_formatadas = await _formatar_operadoras_endereco(
+                    end_item.operadoras
+                )
+
+                detentora_formatada = None
+                if end_item.detentora:
+                    detentora_formatada = DetentoraRead.model_validate(
+                        end_item.detentora
+                    )
+
+                anotacoes_formatadas = await _processar_anotacoes(
+                    end_item, current_user
+                )
+
+                resultados_finais.append(
+                    EnderecoReadComplete(
+                        **base_data,
+                        operadoras=operadoras_formatadas,
+                        detentora=detentora_formatada,
+                        anotacoes=anotacoes_formatadas,
+                    )
+                )
+
+            await session.commit()
+            return resultados_finais
+
+        except AttributeError as e:
+            logger.error(
+                f'Erro de atributo em buscar_por_operadora: {e}', exc_info=True
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail='Erro ao processar dados do usuário.',
+            )
+        except Exception as e:
+            logger.error(f'Erro em buscar_por_operadora: {e}', exc_info=True)
+            await session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail='Erro interno ao buscar endereços por operadora.',
+            )
 
 
 @router.get(
