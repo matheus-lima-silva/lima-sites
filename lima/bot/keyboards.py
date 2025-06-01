@@ -373,7 +373,7 @@ def teclado_simples_cancelar_anotacao() -> InlineKeyboardMarkup:
     """Retorna um teclado inline com um único botão 'Cancelar'."""
     button = [
         InlineKeyboardButton(
-            '❌ Cancelar', callback_data='cancelar_processo_anotacao'
+            '❌ Cancelar', callback_data='anotacao_cancelar_fluxo'
         )
     ]
     return InlineKeyboardMarkup([button])
@@ -393,7 +393,7 @@ def criar_teclado_acoes_endereco(id_endereco: int) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 '📝 Fazer Anotação',
-                callback_data=f'fazer_anotacao_{id_endereco}',
+                callback_data=f'anotacao_iniciar_id_{id_endereco}',
             ),
             InlineKeyboardButton(
                 '📖 Ler Anotações',
@@ -468,12 +468,12 @@ def criar_teclado_operadoras_comuns() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-def criar_botoes_acao_endereco(id_sistema: int) -> InlineKeyboardMarkup:
+def criar_botoes_acao_endereco(id_endereco: int) -> InlineKeyboardMarkup:
     """
     Cria botões de ação contextual para um endereço visualizado.
 
     Args:
-        id_sistema: ID do sistema do endereço
+        id_endereco: ID do endereço
 
     Returns:
         Teclado inline com ações contextuais.
@@ -481,14 +481,16 @@ def criar_botoes_acao_endereco(id_sistema: int) -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                '➕ Nova Anotação', callback_data=f'anotar_{id_sistema}'
+                '➕ Nova Anotação',
+                callback_data=f'anotacao_iniciar_id_{id_endereco}'
             ),
             InlineKeyboardButton(
-                '✏️ Sugerir Melhoria', callback_data=f'sugerir_{id_sistema}'
+                '✏️ Sugerir Melhoria',
+                callback_data=f'sugestao_endereco_id_{id_endereco}'
             ),
             InlineKeyboardButton(
                 '🗒️ Ver todas as anotações',
-                callback_data=f'ver_anotacoes_{id_sistema}',
+                callback_data=f'ver_anotacoes_endereco_id_{id_endereco}',
             ),
         ],
         [
