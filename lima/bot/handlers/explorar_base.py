@@ -188,7 +188,8 @@ def criar_teclado_endereco_detalhes(endereco_id: str) -> InlineKeyboardMarkup:
     keyboard = [
         [
             InlineKeyboardButton(
-                '➕ Nova Anotação', callback_data=f'anotar_{endereco_id}'
+                '➕ Nova Anotação',
+                callback_data=f'anotacao_iniciar_id_{endereco_id}'
             ),
         ],
         [
@@ -618,9 +619,7 @@ async def handle_action_callbacks(
         endereco_id = data.replace('anotar_', '')
         # Chamar diretamente a função de anotação sem modificar query.data
         if iniciar_anotacao_por_callback:
-            # Criar um novo update simulado para o callback de anotação
-            # Em vez de modificar query.data,
-            #  passamos o endereco_id diretamente
+            # Passamos o endereco_id diretamente para o contexto do usuário
             context.user_data['endereco_id_para_anotacao'] = endereco_id
             return await iniciar_anotacao_por_callback(update, context)
         else:
@@ -634,6 +633,7 @@ async def handle_action_callbacks(
                     ]
                 ]),
             )
+            return ConversationHandler.END
 
     return ConversationHandler.END
 
@@ -791,8 +791,14 @@ def criar_conversation_handler_exploracao():
         },
         fallbacks=[
             CommandHandler('cancelar', cancelar_exploracao),
-            CallbackQueryHandler(handle_explorar_callback),
+            CallbackQueryHandler(
+                handle_explorar_callback,
+                pattern=r'^(explorar_|voltar_filtros|voltar_resultados|'
+                r'executar_busca|limpar_filtros|refazer_busca|'
+                r'ver_endereco_|anotar_|filtro_).*$'
+            ),
         ],
         allow_reentry=True,
-        per_message=False,  # Revertido para False pois há MessageHandlers
+        per_message=False,
+        # False é correto para ConversationHandlers com MessageHandler
     )
