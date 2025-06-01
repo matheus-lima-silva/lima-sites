@@ -267,7 +267,6 @@ async def _fetch_and_update_user(
 
 async def get_current_user(
     request: Request,
-    session: AsyncSession = Depends(get_async_session),
     token: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     custom_headers: TelegramUserHeaders = Depends(
         TelegramUserHeaders.from_request
@@ -336,17 +335,18 @@ async def get_current_user(
             ),
         )
 
-    user = await _fetch_and_update_user(
-        session,
-        internal_user_id_from_token,
-        header_telegram_user_id,  # Passando o ID do Telegram validado
-        custom_headers,
-        credentials_exception,
-    )
+    async with get_async_session() as session:
+        user = await _fetch_and_update_user(
+            session,
+            internal_user_id_from_token,
+            header_telegram_user_id,  # Passando o ID do Telegram validado
+            custom_headers,
+            credentials_exception,
+        )
 
-    login_attempts[ip_address]['count'] = 0  # Resetar tentativas
-    logger.info(f'Usuário {user.id} autenticado com sucesso.')
-    return user
+        login_attempts[ip_address]['count'] = 0  # Resetar tentativas
+        logger.info(f'Usuário {user.id} autenticado com sucesso.')
+        return user
 
 
 async def _process_optional_user_with_headers(
@@ -514,7 +514,6 @@ async def _get_and_update_optional_user(
 
 async def get_optional_current_user(
     request: Request,  # Adicionado para consistência, não usado diretamente
-    session: AsyncSession = Depends(get_async_session),
     token: Optional[HTTPAuthorizationCredentials] = Depends(
         bearer_scheme_optional
     ),
@@ -544,19 +543,22 @@ async def get_optional_current_user(
                 f'{internal_user_id}, ID Telegram header: '
                 f'{header_telegram_user_id}'
             )  # noqa: E501
-            return await _get_and_update_optional_user(
-                session,
-                internal_user_id,
-                header_telegram_user_id,
-                custom_headers,
-            )
+            async with get_async_session() as session:
+                return await _get_and_update_optional_user(
+                    session,
+                    internal_user_id,
+                    header_telegram_user_id,
+                    custom_headers,
+                )
         else:
             logger.warning(
                 'Usuário opcional: Token presente, mas inválido ou '
                 'inconsistente com cabeçalhos. Tentando via cabeçalhos apenas.'
             )
 
-    return await _process_optional_user_with_headers(session, custom_headers)
+    async with get_async_session() as session:
+        return await _process_optional_user_with_headers(session,
+                                                          custom_headers)
 
 
 # Funções de dependência para diferentes níveis de acesso
