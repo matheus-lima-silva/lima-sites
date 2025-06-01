@@ -5,7 +5,6 @@ Este módulo contém funções para fazer requisições à API.
 """
 
 import logging
-import os
 from typing import Any, Dict, Optional
 
 import httpx
@@ -83,18 +82,10 @@ async def get_auth_headers(
     if token:
         headers['Authorization'] = f'Bearer {token}'
     else:
-        # Fallback para BOT_TOKEN se disponível
-        bot_token_env = os.getenv('BOT_TOKEN')
-        if bot_token_env:
-            logger.warning(
-                'Usando BOT_TOKEN como fallback - pode não ser aceito pela API'
-            )
-            headers['Authorization'] = f'Bearer {bot_token_env}'
-        else:
-            logger.warning(
-                'Nenhum token encontrado. Requisição seguirá '
-                'apenas com headers X-* (se disponíveis).'
-            )
+        logger.warning(
+            'Nenhum token JWT obtido. Requisição seguirá sem token Bearer, '
+            'apenas com headers X-* (se disponíveis).'
+        )
 
     # Garante que os cabeçalhos X-* sejam adicionados se os dados
     #  estiverem disponíveis.
